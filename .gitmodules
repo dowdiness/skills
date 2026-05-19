@@ -4,3 +4,6 @@
 [submodule "vendor/dowdiness/loom"]
 	path = vendor/dowdiness/loom
 	url = https://github.com/dowdiness/loom.git
+[submodule "vendor/moonbitlang/moonbit-agent-guide"]
+	path = vendor/moonbitlang/moonbit-agent-guide
+	url = https://github.com/moonbitlang/moonbit-agent-guide.git

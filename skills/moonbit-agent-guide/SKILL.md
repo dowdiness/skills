@@ -11,7 +11,7 @@ For fast, reliable task execution, follow this order:
    - Confirm expected behavior, non-goals, and compatibility constraints (target backend, public API stability, performance limits).
 
 2. **Locate module/package boundaries**
-   - Find `moon.mod.json` (module root) and relevant `moon.pkg`/`moon.pkg.json` files (package boundaries and imports).
+   - Find `moon.mod.json` (module root) and relevant `moon.pkg` files (package boundaries and imports).
 
 3. **Discover APIs before coding**
    - Prefer `moon ide doc` queries to discover existing functions/types/methods before adding new code.
@@ -19,14 +19,13 @@ For fast, reliable task execution, follow this order:
 
 4. **Reliable refactoring**
    - Use `moon ide rename` for semantic refactoring. If multiple symbols share a name, add `--loc filename:line:col`.
-   - Use `#deprecated` when old APIs should warn and be removed after migration.
-   - Use `#alias(old_api, deprecated)` when temporary backward compatibility is required during migration.
-   - Remove `#deprecated` and `#alias` shims once callers are migrated and warnings are gone.
+   - If you want maintain backwards compatibility, use `#alias(old_api, deprecated)`.
+   
 5. **Edit minimally and package-locally**
    - Keep changes inside the correct package, use `///|` top-level delimiters, and split code into cohesive files.
 
 6. **Validate in a tight loop**
-   - Run `moon check` after edits.
+   - Run `moon check` after edits, adding `--warn-list +unnecessary_annotation` to enable warning 73 for redundant annotations and over-qualified constructors (`--warn-list +73` is equivalent).
    - Run targeted tests with `moon test [dirname|filename] --filter 'glob'` and use `moon test --update` for snapshot changes.
 
 7. **Finalize before handoff**
@@ -82,7 +81,7 @@ Use the smallest playbook that matches the request.
 MoonBit uses the `.mbt` extension for source code files and interface files with the `.mbti` extension. At
 the top-level of a MoonBit project there is a `moon.mod.json` file specifying
 the metadata of the project. The project may contain multiple packages, each
-with its own `moon.pkg` or `moon.pkg.json` (legacy mode). Subdirectories may also contain `moon.mod.json`
+with its own `moon.pkg`. Subdirectories may also contain `moon.mod.json`
 files indicating that a different set of dependencies can be used for that subdir.
 
 ## Example layout
@@ -111,7 +110,7 @@ my_module
   A MoonBit *module* is like a Go module; it is a collection of packages in subdirectories, usually corresponding to a repository or project.
   Module boundaries matter for dependency management and import paths.
 
-- **Package**: characterized by a `moon.pkg` (or `moon.pkg.json`) file in each directory.
+- **Package**: characterized by a `moon.pkg` file in each directory.
   All subcommands of `moon` will
   still be executed in the directory of the module (where `moon.mod.json` is
   located), not the current package.
@@ -174,7 +173,7 @@ my_module
 - **Don't forget @package prefix when calling functions from other packages**
 - **Don't use ++ or -- (not supported)** - use `i = i + 1` or `i += 1`
 - **Don't add explicit `try` for error-raising functions** - errors propagate automatically (unlike Swift)
-- **Legacy syntax**: Older code may use `function_name!(...)` or `function_name(...)?` - these are deprecated; use normal calls and `try?` for Result conversion
+- **Legacy syntax**: Legacy code may use `function_name!(...)` or `function_name(...)?` - these are deprecated, use normal calls.
 - **Prefer range `for` loops over C-style** - `for i in 0..<(n-1) {...}` and `for j in 0..=6 {...}` are more idiomatic in MoonBit
 - **Async** - MoonBit has no `await` keyword; do not add it. Async functions and tests are characterized by those which call other async functions.
   To identify a function or test as async, simply add the `async` prefix (e.g. `[pub] async fn ...`, `async test ...`).
@@ -186,6 +185,7 @@ my_module
 - `moon new my_project` - Create new project
 - `moon run cmd/main` - Run main package
 - `moon run - < hello.mbt` - Run code from stdin (useful for quick experiments)
+- `moon run -e "code snippet"` - Run code from command line argument (good for one-liners)
   Example:
   ```bash
   cat hello.mbt | moon run -
@@ -199,6 +199,9 @@ my_module
   }
   EOF
   ```
+  ```
+  moon run -e 'fn main { println("Hello, MoonBit!") }'
+  ```
 - `moon build` - Build project
   (`moon run` and `moon build` both support `--target`)
 - `moon check` - Type check without building, use it REGULARLY, it is fast
@@ -207,6 +210,46 @@ my_module
   Run it to see if any public interfaces changed.
   (`moon info` also supports `--target`.)
 - `moon check --target all` - Type check for all backends
+  moon check --output-json can be used with `jq` to filter the output, e.g,
+  ```
+  moon check --output-json 2>&1 | jq -R 'fromjson? | select(.message |
+      contains("unused"))'
+  ```
+  or, for richer post-processing, pipe into a small MoonBit program via
+  `moon run -e`. Use `--target native` (the default `wasm-gc` does not support
+  `async fn main` or `@stdio.stdin`), a quoted heredoc (`<<'EOF'`) so the shell
+  does not expand `$`/backticks in the source, and a de-indented closing `EOF`:
+  ````
+moon check --output-json 2>&1 | moon run --target native -e "$(cat <<'EOF'
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/stdio",
+  "moonbitlang/core/json",
+}
+
+async fn main {
+  let seen = {}
+  while @stdio.stdin.read_until("\n") is Some(line) {
+    try @json.parse(line.trim()) catch {
+      _ => ()
+    } noraise {
+      {"level": "warning", "path": String(p), ..} =>
+        if !seen.contains(p) {
+          seen[p] = ()
+          println(p)
+        }
+      _ => ()
+    }
+  }
+}
+EOF
+)"
+  ````
+  Get the diagnostics with "unused" in the message, which can be used to find unused code.
+- `moon explain` - Show built-in documentation for compiler diagnostics.
+  - `moon explain --diagnostics` lists warning mnemonics and IDs.
+  - `moon explain --diagnostics 31` explains warning 31 (`unused_optional_argument`).
+  - `moon explain --diagnostics unused_optional_argument` explains the same warning by mnemonic.
 - `moon add package` - Add dependency
 - `moon remove package` - Remove dependency
 - `moon fmt` - Format code - should be run periodically - note that the files may be rewritten
@@ -301,7 +344,7 @@ declare pub fn parse_yaml(s : String) -> Yaml raise
 - The `pub type Yaml` line is an intentionally opaque placeholder; the implementer chooses its representation.
 - Note the spec file can also contain normal code, not just declarations.
 
-## `moon ide [doc|peek-def|outline|find-references|hover|rename]` for code navigation and refactoring
+## `moon ide [doc|peek-def|outline|find-references|hover|rename|analyze]` for code navigation and refactoring
 
 For project-local symbols and navigation, use:
 - `moon ide doc <query>` to discover available APIs, functions, types, and methods in MoonBit. Always prefer `moon ide doc` over other approaches when exploring what APIs are available, it is **more powerful and accurate** than `grep_search` or any regex-based searching tools.
@@ -310,6 +353,7 @@ For project-local symbols and navigation, use:
 - `moon ide peek-def` for inline definition context and to locate toplevel symbols.
 - `moon ide hover sym --loc filename:line:col` to get type information at a specific location.
 - `moon ide rename <symbol> <new_name> [--loc filename:line:col]` to rename a symbol project-wide. Prefer `--loc` when symbol names are ambiguous.
+- `moon ide analyze [path]` to inspect public API usage of a package or module when planning safe refactors.
 These tools save tokens and are more precise than grepping (`grep` displays results in both definitions and call sites including comments too).
 
 ### `moon ide doc` for API Discovery
@@ -331,7 +375,9 @@ These tools save tokens and are more precise than grepping (`grep` displays resu
   - Show package `pkg` and list all its exported symbols
   - Example: `moon ide doc "@json"` - explore entire `@json` package
   - Example: `moon ide doc "@encoding/utf8"` - explore nested package
-
+- **Multiple queries**: `moon ide doc "query1" "query2" ...`
+  - Run multiple queries in one invocation and combine results
+  - Example: `moon ide doc "String" "Array" "@json"` to explore multiple types and a package at once
 - **Globbing**: Use `*` wildcard for partial matches, e.g. `moon ide doc "String::*rev*"` to find all String methods with "rev" in their name
 
 #### `moon ide doc` Examples
@@ -475,7 +521,7 @@ Use `moon ide outline` to scan a package or file for top-level symbols and locat
 
 - `moon ide outline dir` outlines the current package directory (per-file headers)
 - `moon ide outline parser.mbt` outlines a single file
-  This is useful when you need a quick inventory of a package, or to find the right file before `goto-definition`.
+  This is useful when you need a quick inventory of a package, or to find the right file before `peek-def`.
 - `moon ide find-references TranslationUnit` finds all references to a symbol in the current module
 
 ```bash
@@ -504,6 +550,14 @@ moon add moonbitlang/x@0.4.6  # Add specific version
 
 ```sh
 moon update                   # Update package index
+```
+
+### Browsing Third-Party Source (`moon fetch`)
+
+`moon fetch <author>/<module>[@<version>]` downloads a package's source into `.repos/<author>/<module>/<version>/` for offline reading (examples, internals, generated `.mbti`). It does NOT add the package to `moon.mod.json` — use `moon add` for that. Add `.repos/` to `.gitignore`.
+
+```sh
+moon fetch moonbitlang/async@0.18.1   # browse source/examples without taking a dependency
 ```
 
 ### Typical Module configurations (`moon.mod.json`)
@@ -535,23 +589,8 @@ import {...} for "test"
 import {...} for "wbtest"
 options("is-main" : true) // other options
 ```
-or moon.pkg.json (legacy mode)
-```json
-{
-  "is_main": true,                 // Creates executable when true
-  "import": [                      // Package dependencies
-    "username/hello/liba",         // Simple import, use @liba.foo() to call functions
-    {
-      "path": "moonbitlang/x/encoding",
-      "alias": "libb"              // Custom alias, use @libb.encode() to call functions
-    }
-  ],
-  "test-import": [...],            // Imports for black-box tests, similar to import
-  "wbtest-import": [...]           // Imports for white-box tests, similar to import (rarely used)
-}
-```
 
-Packages are per directory and packages without a `moon.pkg` or `moon.pkg.json` file are not recognized.
+Packages are per directory and packages without a `moon.pkg` file are not recognized.
 
 ### Package Importing (used in moon.pkg)
 
@@ -570,7 +609,7 @@ Packages are per directory and packages without a `moon.pkg` or `moon.pkg.json` 
 
 Example:
 
-```mbt
+```mbt nocheck
 ///|
 /// In main.mbt after importing "username/hello/liba" in `moon.pkg`
 fn main {
@@ -601,6 +640,83 @@ To add a new package `fib` under `.`:
 
 For more advanced topics like `conditional compilation`, `link configuration`, `warning control`, and `pre-build commands`, see `references/advanced-moonbit-build.md`.
 
+## Async IO
+
+Asynchronous programming uses compiler support plus the `moonbitlang/async` runtime. The runtime supports the native backend best, has limited JavaScript support for IO-independent APIs, and does not support WebAssembly yet. For async IO examples, prefer native. Use `moon add moonbitlang/async@<version>` and `moon ide doc "@async"` to explore the API.
+
+User-facing subpackages: `@async` (core: tasks, timers, cancellation), `@async/aqueue`, `@async/fs, `@async/stdio`, `@async/websocket`, ..etc.
+Each must be imported separately in `moon.pkg`.
+
+1. Add the dependency and pin the native target in `moon.mod.json`:
+   ```json
+   {
+     "deps": { "moonbitlang/async": "0.18.1" },
+     "preferred-target": "native"
+   }
+   ```
+2. In the executable's `moon.pkg`, set `is-main`, restrict to native, and import what you need:
+   ```
+   import {
+     "moonbitlang/async",
+     "moonbitlang/async/stdio",
+   }
+   supported_targets = "+native"
+   options("is-main": true)
+   ```
+3. Define `async fn main` (not `fn main`). Spawn concurrent tasks via `with_task_group` for structured concurrency:
+   ```mbt nocheck
+   ///|
+   async fn main {
+     @async.with_task_group(group => {
+       group.spawn_bg(() => {
+         @async.sleep(50)
+         @stdio.stdout.write("A\n")
+       })
+       group.spawn_bg(() => {
+         @async.sleep(20)
+         @stdio.stdout.write("B\n")
+       })
+     })
+   }
+   ```
+
+**Structured-concurrency contract for `with_task_group`:**
+
+- When `with_task_group` returns, every task spawned in the group is guaranteed to have terminated — no orphan tasks, no resource leaks.
+- If any spawned task fails (and was spawned without `allow_failure=true`), the whole group fails: every other task in the group is cancelled, and the error propagates out of `with_task_group`.
+- Cancelled tasks are not considered failures; they raise a cancellation error but don't trigger peer cancellation.
+
+**Closure syntax for `spawn_bg` / `spawn`:**
+
+- ✅ `() => { ... }` — idiomatic; async-ness is inferred from context.
+- ✅ `async fn() { ... }` — explicit annotation; equivalent to the arrow form.
+- ⚠️ `fn() { ... }` — triggers `Warning [0027] deprecated_syntax`: "this `fn` is asynchronous but not annotated with `async`". Don't use.
+- ❌ `async () => ...`, `fn() async { ... }`, `fn(args) async { ... }` — all parse errors. `async` only goes before `fn`, never before an arrow lambda or after a parameter list.
+
+### Async tests
+
+Use `async test` for tests that call async functions. The package containing the test must import `moonbitlang/async` for the test mode; import any async subpackages used by the test in the same `for "test"` block.
+
+```
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/stdio",
+} for "test"
+```
+
+```mbt nocheck
+///|
+async test "sleep completes" {
+  @async.sleep(1)
+  inspect("done", content="done")
+}
+```
+
+- There is no `await` keyword (similar to functions that raise errors). Inside an `async test`, call async functions normally.
+- Async tests run in parallel by default. Avoid shared ports, files, environment variables, and global mutable state unless each test isolates its resources.
+- Run with `moon test --target native` unless `moon.mod.json` sets `"preferred-target": "native"`. Use `moon test -v` when checking test names or async scheduling behavior.
+- In `README.mbt.md` and docstrings, `mbt check` blocks may contain `async test` blocks; make sure the package imports `moonbitlang/async` for the relevant test mode.
+
 # MoonBit Language Tour
 
 ## Core facts
@@ -621,8 +737,8 @@ For more advanced topics like `conditional compilation`, `link configuration`, `
 
 MoonBit uses checked error-throwing functions, not unchecked exceptions. All errors are a subtype of `Error` and you can declare your own error types using `suberror`.
 Use `raise` in signatures to declare error types and let errors propagate by
-default. Use `try?` to convert to `Result[...]` in tests, or `try { } catch { }`
-to handle errors explicitly. Use `try!` to abort if it does raise.
+default.  `try { } catch { }`
+to handle errors explicitly. Use `try!` to abort if it does raise. Occasionally, use `try?` to convert to `Result[...]` in tests for inspection.
 
 ```mbt check
 ///|
@@ -633,7 +749,7 @@ suberror ValueError {
 
 ///|
 /// Tuple struct to hold position info
-struct Position(Int, Int) derive(ToJson, Show, Eq)
+struct Position(Int, Int) derive(ToJson, Debug, Eq)
 
 ///|
 /// ParseError is subtype of Error
@@ -642,7 +758,7 @@ pub(all) suberror ParseError {
   InvalidEof(pos~ : Position)
   InvalidNumber(pos~ : Position, String)
   InvalidIdentEscape(pos~ : Position)
-} derive(Eq, ToJson, Show)
+} derive(Eq, ToJson, Debug)
 
 ///|
 /// Functions declare what they can throw
@@ -666,7 +782,7 @@ fn div(x : Int, y : Int) -> Int raise {
 ///|
 test "inspect raise function" {
   let result : Result[Int, Error] = try? div(1, 0)
-  guard result is Err(Failure(msg)) && msg.contains("Division by zero") else {
+  guard result is Err(Failure::Failure(msg)) && msg.contains("Division by zero") else {
     fail("Expected error")
   }
 }
@@ -675,8 +791,8 @@ test "inspect raise function" {
 
 ///|
 /// Propagate automatically
-fn use_parse(position~ : Position) -> Int raise ParseError {
-  let x = parse_int("123", position~) // label punning, equivalent to position=position
+fn use_parse(s : String, position~ : Position) -> Int raise ParseError {
+  let x = parse_int(s, position~) // label punning, equivalent to position=position
   // Error auto-propagates by default.
   // Unlike Swift, you do not need to mark `try` for functions that can raise
   // errors; the compiler infers it automatically. This keeps error handling
@@ -685,34 +801,17 @@ fn use_parse(position~ : Position) -> Int raise ParseError {
 }
 
 ///|
-/// Mark `raise` for all possible errors, do not care which error it is.
-/// For quick prototypes, `raise` is acceptable.
-fn use_parse2(position~ : Position) -> Int raise {
-  let x = parse_int("123", position~) // label punning
+/// Use try! to abort if it raises, no raise in the signature 
+fn use_parse2(position~ : Position) -> Int {
+  let x = try! parse_int("123", position~) // label punning
   x * 2
-}
-
-///|
-/// Convert to Result with try?
-fn safe_parse(s : String, position~ : Position) -> Result[Int, ParseError] {
-  let val1 : Result[_] = try? parse_int(s, position~) // Returns Result[Int, ParseError]
-  // try! is rarely used - it panics on error, similar to unwrap() in Rust
-  // let val2 : Int = try! parse_int(s) // Returns Int otherwise crash
-
-  // Alternative explicit handling:
-  let val3 = try parse_int(s, position~) catch {
-    err => Err(err)
-  } noraise { // noraise block is optional - handles the success case
-    v => Ok(v)
-  }
-  ...
 }
 
 ///|
 /// Handle with try-catch
 fn handle_parse(s : String, position~ : Position) -> Int {
-  try parse_int(s, position~) catch {
-    ParseError::InvalidEof => {
+  parse_int(s, position~) catch {
+    ParseError::InvalidEof(pos=_) => {
       println("Parse failed: InvalidEof")
       -1 // Default value
     }
@@ -725,7 +824,7 @@ Important: When calling a function that can raise errors, if you only want to
 propagate the error, you do not need any marker; the compiler infers it.
 Note that all `async` functions automatically can raise errors without explicitly stating this.
 
-## Integers, Char
+## Integer, Char and overloaded literals
 
 MoonBit supports `Byte`, `Int16`, `Int`, `UInt16`, `UInt`, `Int64`, `UInt64`, etc.
 When the type is known, the literal can be overloaded:
@@ -733,24 +832,27 @@ When the type is known, the literal can be overloaded:
 ```mbt check
 ///|
 test "integer and char literal overloading disambiguation via type in the current context" {
-  let a0 = 1 // a is Int by default
   let (int, uint, uint16, int64, byte) : (Int, UInt, UInt16, Int64, Byte) = (
     1, 1, 1, 1, 1,
   )
+  // The literal `1` is overloaded based on the expected type in the current context.
+  // compile time error if the literal cannot be represented in the target type, 
+  // e.g. let a7 : Byte = 256 // ❌ won't compile, 256 exceeds Byte max value 255
   assert_eq(int, uint16.to_int())
-  let a1 : Int = 'b' // this also works, a5 will be the unicode value
-  let a2 : Char = 'b'
-
+  let (a1, a2, a3) : (Int, Char, UInt16) = ('b', 'b', 'b')
+  // char literal overloading, `a1` will be the unicode value of 'b', 
+  // compile time error when the literal cannot be represented in the target type 
+  // e.g, let a6 : UInt16 = '𐍈' // ❌ won't compile, '𐍈' is U+10348, which exceeds UInt16 max value 0xffff  
+  let a4 : Byte = b'b' // Byte literal
 }
 ```
 ## Bytes (Immutable)
 
 ```mbt check
 ///|
-test "bytes literals overloading and indexing" {
+test "bytes literals" {
   let b0 : Bytes = b"abcd"
-  let b1 : Bytes = "abcd" // b" prefix is optional, when we know the type
-  let b2 : Bytes = [0xff, 0x00, 0x01] // Array literal overloading
+  let b1 : Bytes = [0xff, 0x00, 0x01] // Array literal overloading
   guard b0 is [b'a', ..] && b0[1] is b'b' else {
     // Bytes can be pattern matched as BytesView and indexed
     fail("unexpected bytes content")
@@ -762,11 +864,14 @@ test "bytes literals overloading and indexing" {
 ```mbt check
 ///|
 test "array literals overloading: disambiguation via type in the current context" {
-  let a0 : Array[Int] = [1, 2, 3] // resizable
-  let a1 : FixedArray[Int] = [1, 2, 3] // Fixed size
-  let a2 : ReadOnlyArray[Int] = [1, 2, 3]
-  let a3 : ArrayView[Int] = [1, 2, 3]
-
+  let (a0, a1, a2, a3) : (
+    Array[Int],
+    FixedArray[Int],
+    ReadOnlyArray[Int],
+    ArrayView[Int],
+  ) = ([1, 2, 3], [1, 2, 3], [1, 2, 3], [1, 2, 3])
+  // The literal `[1, 2, 3]` is overloaded based on the expected type in the current context.
+  // Defaults to Array[_]
 }
 ```
 ## String (Immutable UTF-16)
@@ -814,24 +919,43 @@ test "string interpolation basics" {
   let name : String = "Moon"
   let config = { "cache": 123 }
   let version = 1.0
-  println("Hello \{name} v\{version}") // "Hello Moon v1.0"
+  println("Hello \{name} v\{version}") // "Hello Moon v1"
   // ❌ Wrong - quotes inside interpolation not allowed:
   // println("  - Checking if 'cache' section exists: \{config["cache"]}")
 
   // ✅ Correct - extract to variable first:
   let has_key = config["cache"] // `"` not allowed in interpolation
   println("  - Checking if 'cache' section exists: \{has_key}")
-  let sb = StringBuilder::new()
-  sb
-  ..write_char('[') // dotdot for imperative method chaining
-  ..write_view([1, 2, 3].map(x => "\{x}").join(","))
-  ..write_char(']')
-  inspect(sb.to_string(), content="[1,2,3]")
+  let sb = StringBuilder()
+  sb.write_char('[')
+  sb.write_view([ for x in [1, 2, 3] => "\{x}" ].join(","))
+  sb.write_char(']')
+  inspect(sb, content="[1,2,3]")
+  let x = 42
+  let streamed = StringBuilder()
+  streamed <+ "hello \{x}"
+  inspect(streamed, content="hello 42")
 }
 ```
 
 Expressions inside `\{}` can only be _basic expressions_ (no quotes, newlines, or nested interpolations). String literals are not allowed as they make lexing too difficult.
 
+String interpolation can also be streamed directly into a `Logger`/`StringBuilder`-style writer with `<+`:
+
+```mbt nocheck
+writer <+ "hello \{x}"
+```
+
+This expands to calls on the writer:
+
+```mbt nocheck
+writer.write_string("hello ")
+writer.write(x)
+```
+
+Literal string segments use `write_string`; interpolated expressions use `write`.
+The expansion is macro-style: it depends on how the `writer` type implements the `write_string` and `write` methods. Types such as HTMLBuilder or JSONBuilder can support interpolation and streaming with the same syntax but different semantics.
+Because MoonBit allows local methods on foreign types, a package can adapt an existing writer type to this syntax by adding local `write_string` and `write` methods.
 
 ### Multiple line strings
 
@@ -861,7 +985,7 @@ test "map literals and common operations" {
   // Map literal syntax
   let map : Map[String, Int] = { "a": 1, "b": 2, "c": 3 }
   let empty : Map[String, Int] = {} // Empty map, preferred
-  let also_empty : Map[String, Int] = Map::new()
+  let also_empty : Map[String, Int] = Map([])
   // From array of pairs
   let from_pairs : Map[String, Int] = Map::from_array([("x", 1), ("y", 2)])
 
@@ -920,7 +1044,7 @@ Convert back with `.to_string()`, `.to_bytes()`, or `.to_array()` when you need 
 enum Tree[T] {
   Leaf(T) // Unlike Rust, no comma here
   Node(left~ : Tree[T], T, right~ : Tree[T]) // enum can use labels
-} derive(Show, ToJson) // derive traits for Tree
+} derive(Debug, ToJson) // derive traits for Tree
 
 ///|
 pub fn Tree::sum(tree : Tree[Int]) -> Int {
@@ -935,11 +1059,22 @@ pub fn Tree::sum(tree : Tree[Int]) -> Int {
 struct Point {
   x : Int
   y : Int
-} derive(Show, ToJson) // derive traits for Point
+} derive(Debug, ToJson) // derive traits for Point
+
+///|
+pub fn Point::Point(x~ : Int, y~ : Int) -> Point {
+  { x, y }
+}
 
 ///|
 test "user defined types: enum and struct" {
-  @json.inspect(Point::{ x: 10, y: 20 }, content={ "x": 10, "y": 20 })
+  json_inspect(Point(x=10, y=20), content={ "x": 10, "y": 20 })
+  debug_inspect(
+    Point(x=10, y=20),
+    content=(
+      #|{ x: 10, y: 20 }
+    ),
+  )
 }
 ```
 
@@ -953,7 +1088,7 @@ pub fn binary_search(arr : ArrayView[Int], value : Int) -> Result[Int, Int] {
   // functional for loop:
   // initial state ; [predicate] ; [post-update] {
   // loop body with `continue` to update state
-  //} else { // exit block
+  //} nobreak { // exit block
   // }
   // predicate and post-update are optional
   for i = 0, j = len; i < j; {
@@ -964,17 +1099,17 @@ pub fn binary_search(arr : ArrayView[Int], value : Int) -> Result[Int, Int] {
     } else {
       continue i, h // functional update of loop state
     }
-  } else { // exit of for loop
+  } nobreak { // exit of for loop
     if i < len && arr[i] == value {
       Ok(i)
     } else {
       Err(i)
     }
   } where {
-    invariant: 0 <= i && i <= j && j <= len,
-    invariant: i == 0 || arr[i - 1] < value,
-    invariant: j == len || arr[j] >= value,
-    reasoning: (
+    proof_invariant: 0 <= i && i <= j && j <= len,
+    proof_invariant: i == 0 || arr[i - 1] < value,
+    proof_invariant: j == len || arr[j] >= value,
+    proof_reasoning: (
       #|For a sorted array, the boundary invariants are witnesses:
       #|  - `arr[i-1] < value` implies all arr[0..i) < value (by sortedness)
       #|  - `arr[j] >= value` implies all arr[j..len) >= value (by sortedness)
@@ -997,8 +1132,8 @@ pub fn binary_search(arr : ArrayView[Int], value : Int) -> Result[Int, Int] {
 ///|
 test "functional for loop control flow" {
   let arr : Array[Int] = [1, 3, 5, 7, 9]
-  inspect(binary_search(arr, 5), content="Ok(2)") // Array to ArrayView implicit conversion when passing as arguments
-  inspect(binary_search(arr, 6), content="Err(3)")
+  debug_inspect(binary_search(arr, 5), content="Ok(2)") // Array to ArrayView implicit conversion when passing as arguments
+  debug_inspect(binary_search(arr, 6), content="Err(3)")
   // for iteration is supported too
   for i, v in arr {
     println("\{i}: \{v}") // `i` is index, `v` is value
@@ -1054,7 +1189,9 @@ fn g(
   let _ : Int = required
   let _ : Int? = optional
   let _ : Int = optional_with_default
-  "\{positional},\{required},\{optional},\{optional_with_default}"
+  // `to_repr` (from the prelude `Debug` trait) renders Option via the
+  // non-deprecated `Show for Repr`, avoiding the deprecated `Show for Option`.
+  "\{positional},\{required},\{to_repr(optional)},\{optional_with_default}"
 }
 
 ///|
@@ -1071,7 +1208,7 @@ Callers still must pass it (as `None`/`Some(...)`).
 ```mbt check
 ///|
 fn with_config(a : Int?, b : Int?, c : Int) -> String {
-  "\{a},\{b},\{c}"
+  "\{to_repr(a)},\{to_repr(b)},\{c}"
 }
 
 ///|
@@ -1089,7 +1226,6 @@ If you want a defaulted optional parameter, write `b? : Int = 1`, not `b? : Int?
 fn f_misuse(a? : Int?, b? : Int = 1) -> Unit {
   let _ : Int?? = a // rarely intended
   let _ : Int = b
-
 }
 // How to fix: declare `(a? : Int, b? : Int = 1)` directly.
 
@@ -1097,7 +1233,6 @@ fn f_misuse(a? : Int?, b? : Int = 1) -> Unit {
 fn f_correct(a? : Int, b? : Int = 1) -> Unit {
   let _ : Int? = a
   let _ : Int = b
-
 }
 
 ///|

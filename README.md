@@ -80,13 +80,17 @@ Like `antfu/skills`, source repositories used for vendored skills live under `ve
 git submodule update --init --recursive
 ```
 
-Current user-owned vendor sources:
+Current vendor sources:
 
+- `vendor/moonbitlang/moonbit-agent-guide` -> `https://github.com/moonbitlang/moonbit-agent-guide`
 - `vendor/dowdiness/incr` -> `https://github.com/dowdiness/incr`
 - `vendor/dowdiness/loom` -> `https://github.com/dowdiness/loom`
 
-The installable skill output remains in `skills/incr/` and `skills/loom/`. Update the source repository first, then sync the corresponding skill output here:
+The installable skill output remains under `skills/`. Update the source repository first, then sync the corresponding skill output here:
 
+- `vendor/moonbitlang/moonbit-agent-guide/moonbit-agent-guide/SKILL.md` -> `skills/moonbit-agent-guide/SKILL.md`
+- `vendor/moonbitlang/moonbit-agent-guide/moonbit-c-binding/SKILL.md` -> `skills/moonbit-c-binding/SKILL.md`
+- `vendor/moonbitlang/moonbit-agent-guide/moonbit-refactoring/SKILL.md` -> `skills/moonbit-refactoring/SKILL.md`
 - `vendor/dowdiness/incr/skills/incr/SKILL.md` -> `skills/incr/SKILL.md`
 - `vendor/dowdiness/loom/skills/loom/SKILL.md` -> `skills/loom/SKILL.md`
 

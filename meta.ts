@@ -12,9 +12,9 @@ export interface SkillMeta {
 
 export const skills: SkillMeta[] = [
   { name: 'moonbit', kind: 'manual', source: '~/.agents/skills/moonbit' },
-  { name: 'moonbit-agent-guide', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide/tree/main/moonbit-agent-guide' },
-  { name: 'moonbit-c-binding', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide/tree/main/moonbit-c-binding' },
-  { name: 'moonbit-refactoring', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide/tree/main/moonbit-refactoring' },
+  { name: 'moonbit-agent-guide', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide', vendorPath: 'vendor/moonbitlang/moonbit-agent-guide', sourceSkillPath: 'vendor/moonbitlang/moonbit-agent-guide/moonbit-agent-guide/SKILL.md', outputPath: 'skills/moonbit-agent-guide/SKILL.md' },
+  { name: 'moonbit-c-binding', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide', vendorPath: 'vendor/moonbitlang/moonbit-agent-guide', sourceSkillPath: 'vendor/moonbitlang/moonbit-agent-guide/moonbit-c-binding/SKILL.md', outputPath: 'skills/moonbit-c-binding/SKILL.md' },
+  { name: 'moonbit-refactoring', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide', vendorPath: 'vendor/moonbitlang/moonbit-agent-guide', sourceSkillPath: 'vendor/moonbitlang/moonbit-agent-guide/moonbit-refactoring/SKILL.md', outputPath: 'skills/moonbit-refactoring/SKILL.md' },
   { name: 'moonbit-agent-setup', kind: 'manual', source: 'dowdiness/moonbit-skills' },
   { name: 'moonbit-deprecated-syntax', kind: 'manual', source: 'dowdiness/moonbit-skills' },
   { name: 'moonbit-error-handling', kind: 'manual', source: 'dowdiness/moonbit-skills' },

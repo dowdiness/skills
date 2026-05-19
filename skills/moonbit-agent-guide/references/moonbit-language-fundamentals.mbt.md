@@ -61,7 +61,7 @@ test "everything is expression in MoonBit" {
       break Some(i) // Exit with value
     }
     i = i + 1
-  } else { // Value when loop completes normally
+  } nobreak { // Value when loop completes normally
     None
   }
   assert_eq(found, Some(2)) // Found at index 2
@@ -321,8 +321,8 @@ fn Rectangle::area(self : Rectangle) -> Double {
 }
 
 ///|
-/// Custom constructor; call as Rectangle(w, h)
-fn Rectangle::Rectangle(w : Double, h : Double) -> Rectangle {
+/// Static methods don't need self
+fn Rectangle::new(w : Double, h : Double) -> Rectangle {
   { width: w, height: h }
 }
 

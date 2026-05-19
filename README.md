@@ -85,7 +85,10 @@ Current user-owned vendor sources:
 - `vendor/dowdiness/incr` -> `https://github.com/dowdiness/incr`
 - `vendor/dowdiness/loom` -> `https://github.com/dowdiness/loom`
 
-The installable skill output remains in `skills/incr/` and `skills/loom/`. Update the source repository first, then sync the corresponding skill output here.
+The installable skill output remains in `skills/incr/` and `skills/loom/`. Update the source repository first, then sync the corresponding skill output here:
+
+- `vendor/dowdiness/incr/skills/incr/SKILL.md` -> `skills/incr/SKILL.md`
+- `vendor/dowdiness/loom/skills/loom/SKILL.md` -> `skills/loom/SKILL.md`
 
 ## Maintenance
 

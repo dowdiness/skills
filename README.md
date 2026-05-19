@@ -15,6 +15,8 @@ pnpx skills add dowdiness/skills --skill='*'
 For local development on this machine:
 
 ```bash
+git clone --recursive https://github.com/dowdiness/skills.git
+cd skills
 ./scripts/install.sh
 ```
 
@@ -69,6 +71,21 @@ vendor/      Upstream or user-owned vendor source markers.
 scripts/     Local validation and catalog helpers.
 meta.ts      Canonical skill source metadata.
 ```
+
+## Vendor Repositories
+
+Like `antfu/skills`, source repositories used for vendored skills live under `vendor/` as Git submodules.
+
+```bash
+git submodule update --init --recursive
+```
+
+Current user-owned vendor sources:
+
+- `vendor/dowdiness/incr` -> `https://github.com/dowdiness/incr`
+- `vendor/dowdiness/loom` -> `https://github.com/dowdiness/loom`
+
+The installable skill output remains in `skills/incr/` and `skills/loom/`. Update the source repository first, then sync the corresponding skill output here.
 
 ## Maintenance
 

@@ -4,6 +4,7 @@ export interface SkillMeta {
   name: string
   kind: SkillKind
   source: string
+  vendorPath?: string
   notes?: string
 }
 
@@ -22,8 +23,8 @@ export const skills: SkillMeta[] = [
   { name: 'moonbit-refactoring-safety', kind: 'manual', source: 'dowdiness/moonbit-skills' },
   { name: 'moonbit-traits', kind: 'manual', source: 'dowdiness/moonbit-skills' },
   { name: 'moonbit-verification', kind: 'manual', source: 'dowdiness/moonbit-skills' },
-  { name: 'incr', kind: 'vendor', source: 'https://github.com/dowdiness/incr', notes: 'User-owned library skill copied from the local incr project context.' },
-  { name: 'loom', kind: 'vendor', source: 'https://github.com/dowdiness/loom', notes: 'User-owned library skill copied from the local loom project context.' },
+  { name: 'incr', kind: 'vendor', source: 'https://github.com/dowdiness/incr', vendorPath: 'vendor/dowdiness/incr', notes: 'User-owned library skill copied from the local incr project context.' },
+  { name: 'loom', kind: 'vendor', source: 'https://github.com/dowdiness/loom', vendorPath: 'vendor/dowdiness/loom', notes: 'User-owned library skill copied from the local loom project context.' },
   { name: 'tuple-wrapper-api-style', kind: 'manual', source: '~/.agents/skills/tuple-wrapper-api-style' },
 ]
 

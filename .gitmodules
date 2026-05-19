@@ -1,0 +1,6 @@
+[submodule "vendor/dowdiness/incr"]
+	path = vendor/dowdiness/incr
+	url = https://github.com/dowdiness/incr.git
+[submodule "vendor/dowdiness/loom"]
+	path = vendor/dowdiness/loom
+	url = https://github.com/dowdiness/loom.git

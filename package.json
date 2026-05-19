@@ -4,6 +4,7 @@
   "scripts": {
     "install-local": "bash scripts/install.sh",
     "list": "node scripts/list.mjs",
+    "sync-vendor": "node scripts/sync-vendor-skills.mjs",
     "uninstall-local": "bash scripts/uninstall.sh",
     "validate": "node scripts/validate.mjs"
   }

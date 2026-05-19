@@ -116,6 +116,26 @@ Validate the collection before publishing changes:
 npm run validate
 ```
 
+Validation also checks vendored skills for drift: every entry with `sourceSkillPath` and `outputPath` in `meta.ts` must match its source directory, excluding `SYNC.md`.
+
+Sync all vendored skills from their source repositories:
+
+```bash
+npm run sync-vendor
+```
+
+Sync selected vendored skills by name:
+
+```bash
+npm run sync-vendor -- moonbit-housekeeping incr
+```
+
+Preview drift without writing files:
+
+```bash
+npm run sync-vendor -- --dry-run
+```
+
 List the catalog derived from `skills/*/SKILL.md`:
 
 ```bash

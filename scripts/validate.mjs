@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { skills } from '../meta.ts'
+import { diffDirs, outputDir, rel, sourceDir, vendorSkills } from './vendor-skills.mjs'
 
 const root = new URL('..', import.meta.url).pathname
 const skillsDir = join(root, 'skills')
@@ -73,6 +74,20 @@ for (const name of actual) {
 for (const name of catalog) {
   if (!actual.has(name)) {
     console.error(`FAIL ${name}: present in meta.ts but missing from skills/`)
+    failures += 1
+  }
+}
+
+for (const skill of vendorSkills()) {
+  const diffs = await diffDirs(sourceDir(skill), outputDir(skill))
+  if (diffs.length > 0) {
+    console.error(`FAIL ${skill.name}: vendor drift from ${rel(sourceDir(skill))}`)
+    for (const diff of diffs.slice(0, 5)) {
+      console.error(`  - ${diff}`)
+    }
+    if (diffs.length > 5) {
+      console.error(`  - ... ${diffs.length - 5} more`)
+    }
     failures += 1
   }
 }

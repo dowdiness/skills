@@ -30,7 +30,7 @@ rtk npm run uninstall-local
 ## Source Categories
 
 - `manual`: written or curated in this repository.
-- `vendor`: copied from an upstream skill source; prefer upstream changes before local edits.
+- `vendor`: copied from an upstream or user-owned source repository; prefer source-repo changes before local edits.
 - `generated`: produced from source documentation; update by comparing against the recorded source revision.
 
 When adding a skill, update `meta.ts`, `README.md`, and run `npm run validate`.

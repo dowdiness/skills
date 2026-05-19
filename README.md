@@ -65,7 +65,7 @@ npm run uninstall-local
 ```text
 skills/      Final shareable skill directories. Each child has a SKILL.md.
 sources/     Source repositories or notes used to generate/sync skills.
-vendor/      Upstream skill sources when we copy existing external skills.
+vendor/      Upstream or user-owned vendor source markers.
 scripts/     Local validation and catalog helpers.
 meta.ts      Canonical skill source metadata.
 ```

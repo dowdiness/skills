@@ -7,13 +7,13 @@ description: >
   problems.
 ---
 
-# MoonBit Development Verification Skill
+# MoonBit development verification skill
 
 **Trigger**: Use this skill when implementing or modifying MoonBit code to ensure quality and catch common issues early.
 
-## Pre-Implementation Phase
+## Pre-implementation phase
 
-### 1. Dependency Health Check
+### 1. Dependency health check
 Before starting any implementation:
 - Run `moon update` to refresh dependencies
 - Attempt a clean build with `moon check` to verify all dependencies are available
@@ -23,14 +23,14 @@ Before starting any implementation:
   - Suggested workarounds (vendoring, alternative packages, or implementing the functionality directly)
 - Do not proceed with implementation if dependencies are broken
 
-### 2. MoonBit Syntax Pattern Verification
+### 2. MoonBit syntax pattern verification
 When implementing new code, be especially careful with:
 - **Tuple destructuring**: Use correct syntax `let (a, b) = tuple` not `let a, b = tuple`
 - **Labelled arguments**: Follow MoonBit conventions for named parameters
 - **Error handling**: Use Result types and pattern matching correctly
 - **Error messages**: Ensure string formats in errors match test assertion expectations exactly
 
-### 3. Deprecated Syntax Awareness
+### 3. Deprecated syntax awareness
 Avoid these deprecated patterns that trigger warnings (treated as errors by CI):
 - `inspect!(...)` → use `inspect(...)` (bare form, no `!` suffix)
 - `not(expr)` → use `!expr`
@@ -42,16 +42,16 @@ Avoid these deprecated patterns that trigger warnings (treated as errors by CI):
 - `typealias` → use `pub type X = Y` or `pub using @pkg { type X }`
 - Test-only imports: use `import { "pkg" @alias } for "wbtest"` (not in the main `import` block)
 
-## Implementation Phase
+## Implementation phase
 
-### 4. Multi-File Change Coordination
+### 4. Multi-file change coordination
 When changes span multiple files:
 - Read all affected files first before making changes
 - Ensure import statements are correct across files
 - Verify type signatures are consistent
 - Check that `.mbti` interface files will be updated correctly
 
-### 5. Test-First Verification
+### 5. Test-first verification
 Before marking any feature complete:
 - Run `moon test` and capture the full output
 - **For each test failure**:
@@ -63,13 +63,14 @@ Before marking any feature complete:
 - If tests use snapshot testing (`inspect`), consider whether behavior change is intentional
 - Only proceed when ALL tests pass
 
-### 5a. Property Test Quality (when using `@qc.quick_check_fn`)
+### 5a. Property test quality
 Property-based tests need their own verification:
 - **Generators must crash, not skip.** If a generator is documented as producing valid inputs, use `unwrap()` on compile/construct results. Never `None => true` — that hides generator bugs as false positives.
-- **Check generator distribution.** After writing generators, verify they actually produce the topology/variant classes you care about. A generator that "covers all cases" but never hits a critical path (e.g., feedback cycles, stereo delay) gives false confidence.
+- **Check generator distribution.** After writing generators, verify they produce the topology/variant classes you care about. A generator that "covers all cases" but never hits a critical path (e.g., feedback cycles, stereo delay) gives false confidence.
 - **Review test generators like production code.** Generator blind spots are test blind spots.
+- Use the current `moonbitlang/core/quickcheck` API: `gen` for a single value and `samples` for arrays of samples.
 
-### 6. CLI Functional Testing (if applicable)
+### 6. CLI functional testing (if applicable)
 If implementing a CLI tool or demo app, manually verify:
 1. Run `--help` at root level - check output formatting
 2. Run `--help` for each subcommand - verify correct help text
@@ -78,9 +79,9 @@ If implementing a CLI tool or demo app, manually verify:
 5. Verify error messages for invalid inputs match expected format
 6. Test edge cases (missing required args, invalid values, etc.)
 
-## Post-Implementation Phase
+## Post-implementation phase
 
-### 7. Interface and Format Verification
+### 7. Interface and format verification
 After all tests pass:
 - Run `moon info` to update `.mbti` interface files
 - Check `git diff *.mbti` to verify API changes are intentional
@@ -88,7 +89,7 @@ After all tests pass:
 - Run `moon fmt` to format code consistently
 - Run final `moon check` to ensure no lint issues
 
-### 8. CI-Matching Checks (critical — do this before pushing)
+### 8. CI-matching checks (critical — do this before pushing)
 The CI uses stricter settings than bare `moon check`. Run the exact CI commands:
 ```bash
 make check      # runs moon check --deny-warn (all warnings → errors)
@@ -108,16 +109,16 @@ moon test --release
 - Formatting drift → always run `moon fmt` after edits
 - Test-only imports in main import block → use `import { ... } for "wbtest"`
 
-### 9. Benchmark Verification (for performance-critical code)
+### 9. Benchmark verification (for performance-critical code)
 If modifying performance-critical paths:
 - Run `moon bench --release` (always with --release flag)
 - Compare results to baseline if available
 - Report any significant performance changes
 
-### 10. Performance Optimization Gate
+### 10. Performance optimization gate
 **If the task is a performance optimization**, use the `moonbit-perf-investigation` skill BEFORE designing any solution. That skill requires reproducing the claimed bottleneck in an isolated microbenchmark. Do not skip this — stale profiling data and O(bad) complexity are not proof of a real problem.
 
-## Quality Checklist
+## Quality checklist
 
 Before marking the task complete, verify:
 - [ ] Dependencies are healthy and build succeeds
@@ -130,7 +131,7 @@ Before marking the task complete, verify:
 - [ ] `make fmt-check` passes (no formatting drift)
 - [ ] Multi-file changes are coordinated and imports are correct
 
-## Error Recovery
+## Error recovery
 
 If you encounter compilation errors:
 - Show the exact error message

@@ -3,20 +3,20 @@ name: moonbit-opaque-types
 description: Implements opaque/newtype pattern in MoonBit for user-friendly public APIs. Use when designing type-safe wrappers, facade layers, or hiding implementation details in MoonBit libraries.
 ---
 
-# MoonBit Opaque Types Pattern
+# MoonBit opaque types pattern
 
 Design pattern for creating type-safe, encapsulated wrapper types in MoonBit public APIs.
 
-## When to Use
+## When to use
 
 - Building facade layers that hide library internals
 - Creating type-safe wrappers (e.g., `Pos` instead of raw `Int`)
 - Enforcing invariants at construction time
 - Preventing accidental misuse of primitive types
 
-## The Pattern
+## The pattern
 
-### Basic Opaque Type
+### Basic opaque type
 
 ```moonbit
 ///| Type-safe text position (0-indexed, non-negative)
@@ -40,7 +40,7 @@ pub fn Pos::value(self : Pos) -> Int {
 }
 ```
 
-### Key Components
+### Key components
 
 | Component | Purpose |
 |-----------|---------|
@@ -50,7 +50,7 @@ pub fn Pos::value(self : Pos) -> Int {
 | Accessors | Controlled read access to internals |
 | `derive(Debug, Eq)` | Standard traits still work |
 
-## Important: Tuple Structs Don't Work
+## Important: tuple structs do not work
 
 MoonBit does **not** support `priv` with tuple structs:
 
@@ -64,9 +64,9 @@ pub(all) struct Pos {
 }
 ```
 
-## Patterns by Use Case
+## Patterns by use case
 
-### 1. Simple Wrapper (validation on construction)
+### 1. Simple wrapper (validation on construction)
 
 ```moonbit
 pub(all) struct UserId {
@@ -87,7 +87,7 @@ pub fn UserId::to_string(self : UserId) -> String {
 }
 ```
 
-### 2. Opaque Wrapper (hide complex type)
+### 2. Opaque wrapper (hide complex type)
 
 ```moonbit
 pub(all) struct Version {
@@ -103,7 +103,7 @@ pub fn Version::to_frontier(self : Version) -> @internal.Frontier {
 }
 ```
 
-### 3. Wrapper with Rich API
+### 3. Wrapper with rich API
 
 ```moonbit
 pub(all) struct Change {
@@ -128,7 +128,7 @@ pub fn Change::get_text(self : Change) -> String? {
 }
 ```
 
-### 4. Escape Hatch for Power Users
+### 4. Escape hatch for power users
 
 ```moonbit
 pub(all) struct TextDoc {
@@ -145,7 +145,7 @@ pub fn TextDoc::advanced(self : TextDoc) -> @internal.Document {
 }
 ```
 
-## Composite Types
+## Composite types
 
 For types with multiple fields, use regular struct:
 
@@ -164,7 +164,7 @@ pub fn Range::from_ints(start : Int, end : Int) -> Range raise PosError {
 }
 ```
 
-## When NOT to Use Opaque Types
+## When not to use opaque types
 
 Use transparent tuple structs when:
 - Internal representation should be public
@@ -197,4 +197,4 @@ Opaque types and `extenum` (v0.9.2) sit at opposite ends of the same extension a
 | Invariants | Enforced at construction by the factory | None at the type level — each consumer must handle unknown variants |
 | Typical use | Library facade, domain wrappers, type-safe IDs | Plugin-extensible AST, open event taxonomies |
 
-If you're choosing between these: pick opaque types when you want to *prevent* downstream code from depending on the shape, and `extenum` when you want to *invite* downstream code to add to it. They are not interchangeable — they answer different questions about who owns the type's variation. See `moonbit-expression-problem` for the full `extenum` treatment.
+When choosing between them, pick opaque types when downstream code should avoid depending on the shape. Pick `extenum` when downstream code should add to it. They are not interchangeable; they answer different questions about who owns the type's variation. See `moonbit-expression-problem` for the full `extenum` treatment.

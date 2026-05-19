@@ -48,16 +48,16 @@ npm run uninstall-local
 | `moonbit-agent-guide` | vendor | Official MoonBit coding, layout, and tooling guide. |
 | `moonbit-c-binding` | vendor | Official native C binding and FFI guide. |
 | `moonbit-refactoring` | vendor | Official idiomatic MoonBit refactoring guide. |
-| `moonbit-agent-setup` | manual | Bootstraps project instructions for Codex, Claude Code, and generic agents. |
-| `moonbit-deprecated-syntax` | manual | Tracks deprecated MoonBit syntax and replacement patterns. |
-| `moonbit-error-handling` | manual | Error type, abort/fail/raise, and recovery boundary guidance. |
-| `moonbit-expression-problem` | manual | Finally Tagless and two-layer extensibility patterns in MoonBit. |
-| `moonbit-housekeeping` | manual | Repo maintenance workflow with BAML-backed worker output parsing. |
-| `moonbit-opaque-types` | manual | Opaque/newtype public API design patterns. |
-| `moonbit-perf-investigation` | manual | Measurement-first performance investigation workflow. |
-| `moonbit-refactoring-safety` | manual | Safety discipline for boundary-crossing MoonBit refactors. |
-| `moonbit-traits` | manual | Practical trait patterns for MoonBit's Self-based trait system. |
-| `moonbit-verification` | manual | MoonBit quality checklist for dependencies, syntax, tests, and interfaces. |
+| `moonbit-agent-setup` | vendor | Bootstraps project instructions for Codex, Claude Code, and generic agents. |
+| `moonbit-deprecated-syntax` | vendor | Tracks deprecated MoonBit syntax and replacement patterns. |
+| `moonbit-error-handling` | vendor | Error type, abort/fail/raise, and recovery boundary guidance. |
+| `moonbit-expression-problem` | vendor | Finally Tagless and two-layer extensibility patterns in MoonBit. |
+| `moonbit-housekeeping` | vendor | Repo maintenance workflow with BAML-backed worker output parsing. |
+| `moonbit-opaque-types` | vendor | Opaque/newtype public API design patterns. |
+| `moonbit-perf-investigation` | vendor | Measurement-first performance investigation workflow. |
+| `moonbit-refactoring-safety` | vendor | Safety discipline for boundary-crossing MoonBit refactors. |
+| `moonbit-traits` | vendor | Practical trait patterns for MoonBit's Self-based trait system. |
+| `moonbit-verification` | vendor | MoonBit quality checklist for dependencies, syntax, tests, and interfaces. |
 | `incr` | vendor | User-owned library skill for the `dowdiness/incr` reactive library. |
 | `loom` | vendor | User-owned library skill for the `dowdiness/loom` parser framework. |
 | `handoff` | manual | End-of-session ritual for memory updates, next-session prompts, and clear readiness. |
@@ -84,6 +84,7 @@ git submodule update --init --recursive
 Current vendor sources:
 
 - `vendor/moonbitlang/moonbit-agent-guide` -> `https://github.com/moonbitlang/moonbit-agent-guide`
+- `vendor/dowdiness/moonbit-skills` -> `https://github.com/dowdiness/moonbit-skills`
 - `vendor/dowdiness/incr` -> `https://github.com/dowdiness/incr`
 - `vendor/dowdiness/loom` -> `https://github.com/dowdiness/loom`
 
@@ -92,8 +93,20 @@ The installable skill output remains under `skills/`. Update the source reposito
 - `vendor/moonbitlang/moonbit-agent-guide/moonbit-agent-guide/SKILL.md` -> `skills/moonbit-agent-guide/SKILL.md`
 - `vendor/moonbitlang/moonbit-agent-guide/moonbit-c-binding/SKILL.md` -> `skills/moonbit-c-binding/SKILL.md`
 - `vendor/moonbitlang/moonbit-agent-guide/moonbit-refactoring/SKILL.md` -> `skills/moonbit-refactoring/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-agent-setup/SKILL.md` -> `skills/moonbit-agent-setup/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-deprecated-syntax/SKILL.md` -> `skills/moonbit-deprecated-syntax/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-error-handling/SKILL.md` -> `skills/moonbit-error-handling/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-expression-problem/SKILL.md` -> `skills/moonbit-expression-problem/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-housekeeping/SKILL.md` -> `skills/moonbit-housekeeping/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-opaque-types/SKILL.md` -> `skills/moonbit-opaque-types/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-perf-investigation/SKILL.md` -> `skills/moonbit-perf-investigation/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-refactoring-safety/SKILL.md` -> `skills/moonbit-refactoring-safety/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-traits/SKILL.md` -> `skills/moonbit-traits/SKILL.md`
+- `vendor/dowdiness/moonbit-skills/moonbit-verification/SKILL.md` -> `skills/moonbit-verification/SKILL.md`
 - `vendor/dowdiness/incr/skills/incr/SKILL.md` -> `skills/incr/SKILL.md`
 - `vendor/dowdiness/loom/skills/loom/SKILL.md` -> `skills/loom/SKILL.md`
+
+For vendor skills, treat the source repository as authoritative. Do not edit the synced copy in `skills/` directly except for sync metadata.
 
 ## Maintenance
 

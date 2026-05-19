@@ -9,7 +9,7 @@ description: >
   pattern, or defunctionalized associated types in MoonBit.
 ---
 
-# Effective Trait Usage Patterns in MoonBit
+# Effective trait usage patterns in MoonBit
 
 ## Introduction
 
@@ -17,7 +17,7 @@ MoonBit's trait system uses a **Self-type based** design: unlike Haskell's type 
 
 This document explores how to write effective, idiomatic traits under these constraints, organized from the most natural patterns to increasingly creative workarounds.
 
-## Understanding the Constraints
+## Understanding the constraints
 
 A MoonBit trait can reference:
 
@@ -31,7 +31,7 @@ A MoonBit trait *cannot* reference:
 
 This means every type that appears in a trait method signature, other than `Self`, must be a specific, known type.
 
-## Pattern 1: Self-Closed Algebras (Endomorphisms)
+## Pattern 1: self-closed algebras (endomorphisms)
 
 The most natural pattern. All inputs and outputs are `Self`.
 
@@ -52,7 +52,7 @@ trait Semigroup {
 
 This is ideal for **algebraic structures** where operations close over a single type. Mathematical traits (groups, rings, lattices) and comparison traits fit perfectly.
 
-### Builder Pattern Variant
+### Builder pattern variant
 
 Fluent builders are a natural application of `Self -> Self` chains:
 
@@ -66,14 +66,14 @@ trait Builder {
 
 Each method returns `Self`, enabling chained calls while remaining fully type-safe.
 
-### When to Use
+### When to use
 
 - Equality, ordering, hashing
 - Algebraic operations (combine, merge, union)
 - Fluent/builder APIs
 - Any operation that is "closed" over one type
 
-## Pattern 2: Fixed-Type Projections
+## Pattern 2: fixed-type projections
 
 When a trait needs to produce or consume a value of a type other than `Self`, fix that type to a concrete, domain-appropriate type.
 
@@ -101,7 +101,7 @@ trait Measure {
 
 The key insight: if you would write `trait Show[T] { show(Self) -> T }` and then *always* instantiate `T = String`, the type parameter adds no value. A fixed projection is simpler.
 
-### Choosing the Right Target Type
+### Choosing the right target type
 
 The choice of target type matters. Prefer types that are:
 
@@ -109,14 +109,14 @@ The choice of target type matters. Prefer types that are:
 - **Standardized** within your codebase: pick one canonical representation for bytes, one for JSON, etc.
 - **Composable**: `Bytes` can be concatenated; `Int` (for hashing) can be combined
 
-### When to Use
+### When to use
 
 - Serialization / deserialization
 - Display / debug output
 - Measurement / metrics
 - Any "extract a summary" operation
 
-## Pattern 3: Capability Traits (Fine-Grained Interfaces)
+## Pattern 3: capability traits (fine-grained interfaces)
 
 Keep traits small — ideally one or two methods — representing a single capability.
 
@@ -143,14 +143,14 @@ Fine-grained traits are essential under this constraint set because:
 2. **Composition via multiple trait bounds** (`T : Readable + Closable`) replaces what would otherwise require generic traits
 3. **Implementors** only pay for what they provide
 
-### When to Use
+### When to use
 
 - I/O abstractions
 - Resource management (open, close, flush)
 - Permission / access control modeling
 - Any cross-cutting concern
 
-## Pattern 4: Callback-Based Iteration (CPS Style)
+## Pattern 4: callback-based iteration (CPS style)
 
 Without associated types, you cannot write a generic `Iterator` trait. The workaround is to push values into callbacks instead of pulling them out.
 
@@ -163,7 +163,7 @@ trait Iterator {
 }
 ```
 
-### Solution A: Domain-Specific Iterables
+### Solution A: domain-specific iterables
 
 Fix the element type to something domain-appropriate:
 
@@ -183,7 +183,7 @@ trait LineReader {
 
 You cannot write a single generic `Iterable[T]`, but you can write `CharSource`, `EventSource`, `LineReader` — each serving a specific domain. In practice, this is often sufficient.
 
-### Solution B: Universal Value Type
+### Solution B: universal value type
 
 If you need a single, cross-domain iterable, route through a sum type:
 
@@ -203,7 +203,7 @@ trait Iterable {
 
 This is effectively a fallback to dynamic typing within a statically-typed shell.
 
-### Solution C: Fold-Style Aggregation
+### Solution C: fold-style aggregation
 
 Instead of yielding individual elements, fold them into a fixed accumulator type:
 
@@ -223,13 +223,13 @@ trait Reducible {
 
 This pre-applies the operation, sidestepping the need to abstract over element types entirely.
 
-### When to Use
+### When to use
 
 - Streams / event sources / async producers
 - Any "collection-like" abstraction
 - Logging, metrics, observer patterns
 
-## Pattern 5: Trait Multiplication (Enumerating Concrete Pairs)
+## Pattern 5: trait multiplication (enumerating concrete pairs)
 
 When you need a multi-parameter relationship like `Convert[T]`, decompose it into one trait per target type.
 
@@ -243,19 +243,19 @@ trait ToString { to_string(Self) -> String }
 trait ToJson   { to_json(Self) -> JsonValue }
 ```
 
-### Managing Combinatorial Growth
+### Managing combinatorial growth
 
 1. **Only define what you need.** In practice, the set of useful conversions is small.
 2. **Group by domain.** A serialization module defines `ToJson`, `ToBytes`, `ToXml`. A numeric module defines `ToInt`, `ToFloat`.
 3. **Prefer a universal representation.** Route through a common intermediate (like `Value` or `JsonValue`) rather than defining N² direct conversions.
 
-### When to Use
+### When to use
 
 - Type conversions
 - Encoding / decoding to specific formats
 - Any relationship that would be `trait R[A, B]` in a more expressive system
 
-## Pattern 6: Newtype Wrappers for Type-Level Distinctions
+## Pattern 6: newtype wrappers for type-level distinctions
 
 Without type parameters, you can use newtypes to recover some type-level precision:
 
@@ -273,15 +273,15 @@ impl HasMagnitude for Seconds with magnitude(self) { self.value }
 impl HasMagnitude for MetersPerSecond with magnitude(self) { self.value }
 ```
 
-Each newtype can implement the same trait differently, and the type system prevents you from mixing `Meters` and `Seconds` accidentally.
+Each newtype can satisfy the same trait differently, and the type system prevents you from mixing `Meters` and `Seconds` accidentally.
 
-### When to Use
+### When to use
 
 - Units of measure
 - Tagged identifiers (UserId vs. PostId)
 - Domain-specific wrappers that share behavior but must not be confused
 
-## Pattern 7: Visitor / Double Dispatch
+## Pattern 7: visitor / double dispatch
 
 For operations that need to branch on multiple types without type parameters:
 
@@ -299,13 +299,13 @@ trait Visitable {
 
 Each `visit_*` method takes a concrete type, so no type parameters are needed.
 
-### When to Use
+### When to use
 
 - AST traversal
 - Serialization of heterogeneous data
 - Any situation where you need double dispatch
 
-## Pattern 8: Defunctionalized Associated Types
+## Pattern 8: defunctionalized associated types
 
 When a trait ideally needs an associated type (a type that varies per implementation), defunctionalize it: each implementation becomes a separate struct that fixes the associated type concretely.
 
@@ -337,7 +337,7 @@ struct EditorLayout  { layout: Layout[EditorAnn] }       // A = EditorAnn
 struct LspLayout     { layout: Layout[LspAnn] }          // A = LspAnn
 ```
 
-All three implement the same trait — here called `TermSym`, a Finally Tagless interpreter trait with one method per AST constructor (see the `moonbit-expression-problem` skill for `TermSym` / `replay` in full). `replay(term)` is a function whose return type is resolved by type ascription at the call site, so it works with any of the three wrapper structs:
+All three satisfy the same trait, here called `TermSym`, a Finally Tagless interpreter trait with one method per AST constructor. See the `moonbit-expression-problem` skill for `TermSym` / `replay` in full. `replay(term)` is a function whose return type is resolved by type ascription at the call site, so it works with any of the three wrapper structs:
 
 ```moonbit
 let pretty = (replay(term) : PrettyLayout).layout   // Layout[SyntaxCategory]
@@ -345,7 +345,7 @@ let editor = (replay(term) : EditorLayout).layout    // Layout[EditorAnn]
 let lsp    = (replay(term) : LspLayout).layout       // Layout[LspAnn]
 ```
 
-### Providing a Default via Trait
+### Providing a default via trait
 
 For the most common case, provide a trait with a fixed return type:
 
@@ -361,32 +361,32 @@ term.to_layout()
 (replay(term) : EditorLayout).layout
 ```
 
-`Pretty` is implemented on `Term` itself — the convenience layer for the default `SyntaxCategory` annotation. `EditorLayout` and `LspLayout` do *not* implement `Pretty` (their `Layout[A]` return types differ); callers reach them via the explicit `replay(term) : StructType` path. If you're not using Finally Tagless, the struct-per-annotation idea still applies; replace `replay` with whatever polymorphic construction mechanism fits your codebase (e.g., overloaded builder functions returning each struct).
+`Term` itself satisfies `Pretty`, giving the common `SyntaxCategory` annotation a convenient method layer. `EditorLayout` and `LspLayout` do *not* satisfy `Pretty` because their `Layout[A]` return types differ. Callers reach them by choosing a concrete result type such as `EditorLayout`. If you are not using Finally Tagless, the struct-per-annotation idea still applies; replace `replay` with whatever polymorphic construction mechanism fits your codebase.
 
-### Key Insight
+### Key insight
 
-The associated type becomes a **field type choice** in each struct. The trait polymorphism (type ascription on `replay`) is the "dispatch" that associated types would handle automatically. This is the same tradeoff as defunctionalization everywhere: you lose the abstraction (can't write code generic over "any annotation type") but gain concreteness (each variant is fully typed, no runtime dispatch).
+The associated type becomes a **field type choice** in each struct. The trait polymorphism (type ascription on `replay`) is the "dispatch" that associated types would handle automatically. This is the same tradeoff as defunctionalization everywhere: you lose the abstraction (can't write code generic over "any annotation type") but gain fully typed variants with no runtime dispatch.
 
-### When to Use
+### When to use
 
 - A trait method needs to return `Container[T]` where `T` varies per implementation
 - The number of concrete choices for `T` is small and known
 - A generic data type (`Layout[A]`, `Array[A]`, `Tree[A]`) is parameterized, but the trait consuming it cannot be
 - Combined with Finally Tagless: each TermSym interpretation fixes the container's type parameter differently
 
-## Feasibility Check Before Designing
+## Feasibility check before designing
 
 Before designing a trait abstraction, verify the language can express it:
 
 1. **Write the trait signature first.** If the methods have different arity or return types across implementations (e.g., `process(Self, AudioBuffer)` vs `process(Self, AudioBuffer, AudioBuffer)`), a single trait cannot capture both. MoonBit traits have no associated types, no default methods, and no type parameters.
 
-2. **Check what's actually duplicated.** Often the "duplication" is thin forwarding methods (10 lines each), while the real logic is already shared in a backing struct. Extracting capability traits for the shared interface (e.g., `apply_control`) is worthwhile; forcing a trait over structurally different methods is not.
+2. **Check what is duplicated.** Often the "duplication" is thin forwarding methods (10 lines each), while the real logic is already shared in a backing struct. Extracting capability traits for the shared interface (e.g., `apply_control`) is worthwhile; forcing a trait over structurally different methods is not.
 
 3. **Prefer capability traits over monolithic unification.** If only some methods can be unified, extract those into a small trait and leave the rest as concrete methods. Partial wins are still wins.
 
-## Anti-Patterns
+## Anti-patterns
 
-### Over-Sized Traits
+### Over-sized traits
 
 ```moonbit
 // Avoid: too many responsibilities, hard to implement partially
@@ -404,15 +404,15 @@ trait DatabaseConnection {
 
 Split into `Queryable`, `Transactional`, `Configurable`, etc.
 
-### Phantom Generality
+### Phantom generality
 
 Don't create a trait that *looks* general but can only have one meaningful implementation. Use a struct directly instead.
 
-### Forcing Trait Where a Function Suffices
+### Forcing a trait where a function suffices
 
 If the operation does not vary by type, it does not need to be a trait.
 
-## Summary of Design Heuristics
+## Summary of design heuristics
 
 | Situation | Pattern | Key Idea |
 |-----------|---------|----------|
@@ -425,13 +425,13 @@ If the operation does not vary by type, it does not need to be a trait.
 | Branching on multiple types | Visitor | Concrete `visit_*` methods |
 | Trait needs associated type | Defunctionalized Associated Types | Each impl struct fixes `Container[A]` concretely |
 
-The overarching principle: **embrace the concreteness.** Without type parameters, your traits describe relationships between `Self` and specific, known types. This is not a weakness to work around but a design constraint that pushes toward clear, discoverable, domain-grounded interfaces.
+The guiding principle is to embrace concrete types. Without type parameters, traits describe relationships between `Self` and specific, known types. Treat that as a design constraint that pushes toward clear, discoverable, domain-grounded interfaces.
 
-## Opaque Types (Newtype Implementation Details)
+## Opaque types (newtype implementation details)
 
 Pattern 6 (Newtypes) gives the concept; this section gives the MoonBit implementation.
 
-### Basic Opaque Type
+### Basic opaque type
 
 ```moonbit
 pub(all) struct Pos {
@@ -459,17 +459,17 @@ pub fn Pos::value(self : Pos) -> Int { self.value }
 
 **Important:** `priv` doesn't work with tuple structs. Use named fields.
 
-### Patterns by Use Case
+### Patterns by use case
 
 - **Simple wrapper** (validation): `UserId::UserId(id) -> UserId raise UserIdError`, called as `UserId(id)` or `try? UserId(id)`
 - **Opaque wrapper** (hide complex type): `Version::from_frontier(f) -> Version`
-- **Rich API wrapper**: expose semantic methods (`is_insert`, `get_text`), not raw access
+- **Rich API wrapper** exposes semantic methods (`is_insert`, `get_text`) instead of raw access
 - **Escape hatch**: `TextDoc::advanced(self) -> @internal.Document` for power users
 
-### When NOT to Use
+### When not to use
 
 Use transparent types when internals should be public, no invariants to enforce, or used only internally.
 
-## See Also
+## See also
 
 - **`moonbit-expression-problem`** — for extensible data + operations (Finally Tagless, Two-Layer Architecture, Function Records). Use when the question is "how do I add new variants AND new operations?" rather than "how do I design a trait API?"

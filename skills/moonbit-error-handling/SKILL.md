@@ -8,13 +8,13 @@ description: >
   fallible functions, boundary safety, error recovery.
 ---
 
-# MoonBit Error Handling Conventions
+# MoonBit error handling conventions
 
 Reference for consistent, safe error handling across MoonBit projects. Grounded in MoonBit's error primitives and designed for long-running WASM/browser applications where crashes are especially costly.
 
 **MoonBit version note:** Based on MoonBit's current error handling model (2025). `suberror A B` bare syntax is deprecated; use `suberror A { A(B) }`. Verify against [MoonBit error handling docs](https://docs.moonbitlang.com/en/latest/language/error-handling.html) if syntax has changed.
 
-## Quick Reference
+## Quick reference
 
 | Primitive | Catchable? | Includes location? | Use for |
 |-----------|-----------|-------------------|---------|
@@ -26,11 +26,11 @@ Reference for consistent, safe error handling across MoonBit projects. Grounded 
 | `raise?` | — | — | Error polymorphism for higher-order functions |
 | `noraise` | — | — | Explicitly infallible (but does NOT prevent `abort`) |
 
-## Decision Framework
+## Decision framework
 
 Error handling has two independent dimensions: **control flow** (how the error propagates) and **fault class** (what caused the error).
 
-### Control Flow
+### Control flow
 
 ```
 abort ———— fail ———— raise ConcreteError ———— return (T, Diagnostics)
@@ -38,7 +38,7 @@ uncatchable  catchable   catchable+typed          always succeeds
              +location   +matchable               +warnings
 ```
 
-### Fault Class
+### Fault class
 
 | Fault class | Description | Default mechanism |
 |-------------|-------------|-------------------|
@@ -46,7 +46,7 @@ uncatchable  catchable   catchable+typed          always succeeds
 | **Expected** | Input validation, I/O, parsing, business logic | `raise ConcreteError` |
 | **Corruption** | Data integrity loss: broken invariants, poisoned state, partial mutation without rollback | `abort("msg")` |
 
-### The Decision Tree
+### The decision tree
 
 ```
 Is the data structure / state already corrupt?
@@ -67,13 +67,15 @@ Otherwise:
   ──► raise ConcreteError::Variant(...)
 ```
 
-**Key distinction:** A guard that checks structural integrity (e.g., "node must have children") detects *pre-existing corruption*, not a precondition on caller input. Even if the guard fires before *this function* mutates anything, the data structure is already in a corrupt state. That's the corruption fault class, not defect.
+**Structural checks detect corruption.** A guard that checks structural integrity (e.g., "node must have children") detects *pre-existing corruption*. It is separate from a precondition on caller input. Even if the guard fires before *this function* mutates anything, the data structure is already in a corrupt state. Classify the fault as corruption.
 
-**No safe recovery = abort.** Even when the fault class is defect (not corruption), if catching the error and continuing would cause *subsequent operations* to produce silently wrong results, use `abort`. The question isn't just "is the data corrupt now?" but also "can the caller safely continue after this?" Example: if a parser's `start_at` fails and the parser continues, the next `finish_node` closes the wrong ancestor — silently corrupting the tree. That's worse than crashing. When recovery corrupts, abort is correct even for defects.
+**No safe recovery = abort.** Even when the fault class is defect (not corruption), use `abort` if catching the error and continuing would cause *subsequent operations* to produce silently wrong results. Ask both "is the data corrupt now?" and "can the caller safely continue after this?"
+
+Example: if a parser's `start_at` fails and the parser continues, the next `finish_node` closes the wrong ancestor, silently corrupting the tree. Crashing is better than producing a corrupt tree. When recovery corrupts later operations, abort is correct even for defects.
 
 **This rule takes precedence over the FFI-reachability prohibition** (see FFI Safety below and the checklist's "unless corruption-risk" clause). The FFI-reachability rule forbids `abort` for ordinary defects where catching and continuing is safe; it does not forbid `abort` for the no-safe-recovery case. "corruption-risk" in the checklist means **either** pre-existing corruption **or** "recovery would corrupt subsequent operations" — both qualify. A WASM module crash is the correct outcome when the alternative is silent mis-structuring that the host cannot detect.
 
-### When to Use Each
+### When to use each
 
 **`abort("msg")`** — Almost never in application code.
 
@@ -86,7 +88,7 @@ fn validate_invariant(self : BTree[T]) -> Unit {
 }
 ```
 
-**`fail("msg")`** — Defect in logic, not in data. The data structure is consistent, but the code reached a path that should be impossible.
+**`fail("msg")`** — Defect in logic. The data structure is consistent, but the code reached a path that should be impossible.
 
 ```moonbit
 // Unreachable match branch — if hit, it's a bug, but no state is corrupted
@@ -129,13 +131,13 @@ fn parse_cst(source : String) -> (CstNode, Array[Diagnostic]) raise LexError {
 }
 ```
 
-The returned `T` is a **complete, usable value** — for tree-shaped data, that means Error nodes are embedded at fault sites so downstream traversal continues working; for flat data (e.g., a JSON `Value`), that means a reasonable fallback (e.g., "last value wins" on duplicate keys). It is not a partial prefix that stops at the first problem — callers should be able to ignore the diagnostics and still process the value. If no such fallback exists for a given failure mode, that mode belongs in the `raise` channel, not in diagnostics.
+The returned `T` is a **complete, usable value**. For tree-shaped data, Error nodes are embedded at fault sites so downstream traversal continues working. For flat data (e.g., a JSON `Value`), use a reasonable fallback such as "last value wins" on duplicate keys. Callers should be able to ignore the diagnostics and still process the value. Failure modes without a usable fallback belong in the `raise` channel.
 
-## Error Type Design
+## Error type design
 
-### Granularity: Group by Catch Site
+### Granularity: group by catch site
 
-Error type granularity is determined by **who catches the error and what decisions they make**, not by package structure.
+Choose error type granularity by **who catches the error and what decisions they make**. Package structure is secondary.
 
 - **Errors that callers typically catch together** should share a type
 - **Errors that callers handle independently** should have separate types
@@ -162,9 +164,9 @@ type! MoveError { ... }
 
 **When a package has no expected failures** (all errors are defects or corruption), it needs no error types at all. Use `fail` for defects and `abort` for corruption. Don't create error types for bugs — they're not part of the API contract.
 
-### Variant Design: Semantic, With Context
+### Variant design: semantic, with context
 
-Name variants by what went wrong semantically, not by which dependency failed. Include enough context for the caller to act on.
+Name variants for the semantic failure. Include enough context for the caller to act on, and avoid dependency-leaking names unless the dependency is the semantic contract.
 
 ```moonbit
 // Good: semantic variants with context
@@ -183,7 +185,7 @@ type! TextError {
 
 **Exception:** When the dependency IS the semantic contract (thin facades, re-export packages), direct propagation is correct. See Boundary Rules below.
 
-**Pitfall: same syntax, different semantics.** When multiple code paths share the same syntactic pattern (e.g., `stack.last() → None`), don't assign the same variant to all of them. Trace *why* the condition fires in each context. Example: `stack.last() → None` after a FinishNode means an unbalanced FinishNode consumed the root frame; the same pattern after a Token means the token has no parent because prior FinishNodes emptied the stack. These are different error variants (`UnbalancedFinish` vs `OrphanedEvent`) despite identical syntax.
+**Pitfall: same syntax, different semantics.** When multiple code paths share the same syntactic pattern (e.g., `stack.last() → None`), assign variants by cause. Trace *why* the condition fires in each context. Example: after a FinishNode, `stack.last() → None` means an unbalanced FinishNode consumed the root frame. After a Token, the same pattern means the token has no parent because prior FinishNodes emptied the stack. Use different error variants (`UnbalancedFinish` vs `OrphanedEvent`) despite identical syntax.
 
 ### Error Hierarchies (`suberror`)
 
@@ -198,7 +200,7 @@ suberror OpLogError { CausalGraph(CausalGraphError) }
 suberror AppError { Editor(EditorError), Parser(ParserError) }
 ```
 
-### `Failure` vs Custom Error Types
+### `Failure` vs custom error types
 
 `Failure` (via `fail()`) is for defect detection only. If the condition can be triggered by:
 - Caller input
@@ -207,9 +209,9 @@ suberror AppError { Editor(EditorError), Parser(ParserError) }
 - Disk contents
 - Version skew
 
-...then it is an **expected failure**, not a defect. Use `raise ConcreteError`.
+...then classify it as an **expected failure** and use `raise ConcreteError`.
 
-## Function Signatures
+## Function signatures
 
 | Situation | Signature | Rationale |
 |-----------|-----------|-----------|
@@ -220,9 +222,9 @@ suberror AppError { Editor(EditorError), Parser(ParserError) }
 | Definitely infallible | `fn foo() -> T noraise` | Explicit guarantee. **Caveat:** `noraise` does NOT prevent `abort`. A `noraise` function can still crash. |
 | Defect guard | `fail("reason")` | Source location included. Only for impossible states. |
 
-## Boundary Rules
+## Boundary rules
 
-### Where to Catch
+### Where to catch
 
 Errors should propagate upward until they reach a **quarantine boundary** — a point where the application can discard suspect state and restore trust.
 
@@ -233,7 +235,7 @@ Errors should propagate upward until they reach a **quarantine boundary** — a 
 | **Network message handler** | Catch all | Log, reject the message, continue processing others. |
 | **Inside library/core** | Catch **specific types only** | Handle the expected case. Rethrow unknown errors. |
 
-### Catch-Block Discipline
+### Catch-block discipline
 
 **Inside core/library code** — explicit cases plus rethrow:
 
@@ -290,7 +292,7 @@ catch {
 }
 ```
 
-### FFI Safety: `abort` Bypasses Catch
+### FFI safety: `abort` bypasses catch
 
 `abort` is outside the raise/catch channel. An outer `catch` block does NOT protect against `abort`. This means:
 
@@ -300,7 +302,7 @@ When reviewing FFI boundary code, trace all reachable functions and verify they 
 
 **Exception — the "no safe recovery" carve-out.** The audit's goal is to eliminate `abort` from FFI-reachable paths *when catching and continuing is safe*. It is not to eliminate `abort` universally. When continuing after a caught error would corrupt subsequent operations (see "No safe recovery = abort" in Decision Framework above), the `abort` is the correct outcome and the audit result is "intentionally retained." Document the rationale inline. Classic example: a CST/AST builder with stack-shaped state — an unbalanced `finish_node` means future calls will close unintended ancestors, so crashing the WASM module is preferable to silent tree corruption.
 
-## Mutation Safety
+## Mutation safety
 
 Any function that mutates shared state and can `raise` must satisfy one of:
 
@@ -333,11 +335,11 @@ fn dangerous_update(self : Editor) -> Unit {
 }
 ```
 
-## Diagnostic Pattern
+## Diagnostic pattern
 
 For operations that succeed with warnings (parser error recovery, linting, deprecation notices), return a structured diagnostic alongside the result.
 
-### Minimum Diagnostic Structure
+### Minimum diagnostic structure
 
 `Array[String]` is insufficient except for prototyping. A proper diagnostic includes:
 
@@ -357,9 +359,9 @@ pub(all) struct Diagnostic {
 
 The specific type is project-defined, but the convention requires at least **severity** and **message**. Span/location is strongly recommended.
 
-### Diagnostics vs Errors
+### Diagnostics vs errors
 
-These are orthogonal concerns:
+Diagnostics and errors are orthogonal concerns:
 
 ```moonbit
 // A function can BOTH raise fatal errors AND return diagnostics for non-fatal ones
@@ -369,7 +371,7 @@ fn parse_cst(source : String) -> (CstNode, Array[Diagnostic]) raise LexError {
 }
 ```
 
-## Testing Error Behavior
+## Testing error behavior
 
 ### Testing `raise` (expected failures)
 
@@ -405,7 +407,7 @@ test "malformed input produces diagnostics" {
 }
 ```
 
-## Anti-Patterns
+## Anti-patterns
 
 | Pattern | Problem | Fix |
 |---------|---------|-----|
@@ -417,7 +419,7 @@ test "malformed input produces diagnostics" {
 | `noraise` on function that calls `abort` | Misleading — `noraise` only covers `raise`, not `abort` | Document abort paths or eliminate them |
 | Giant umbrella error enum | One type with 20 variants spanning unrelated catch sites | Split by catch-site — errors caught together share a type |
 
-## Boundary Wrapping vs Direct Propagation
+## Boundary wrapping vs direct propagation
 
 When package A calls package B which raises `BError`:
 
@@ -428,9 +430,9 @@ When package A calls package B which raises `BError`:
 | B is an implementation detail | Wrap with semantic variants | `EditorError::SyncFailed(detail~)` not `EditorError::FromEgw(TextError)` |
 | B is replaceable | Wrap — A's API must be independent of B | Translate to A's own error vocabulary |
 
-## Audit Process
+## Audit process
 
-The process below is written for auditing existing `abort` calls, but the same four steps apply when **designing new** fallible APIs — substitute "for each new `raise` / `fail` / `abort` site" for "for each abort site" in step 4, and the other steps carry over unchanged.
+The process below is written for auditing existing `abort` calls. The same four steps apply when **designing new** fallible APIs. In step 4, substitute "for each new `raise` / `fail` / `abort` site" for "for each abort site"; the other steps carry over unchanged.
 
 When auditing `abort` calls for conversion to `fail`/`raise`:
 
@@ -438,21 +440,21 @@ When auditing `abort` calls for conversion to `fail`/`raise`:
 
 **2. Find ALL callers of functions whose signatures will change.** Use `moon ide find-references` or grep the entire module — not just the file you expect callers in. A missed caller means an unhandled error path that still crashes. Pay special attention to: benchmarks, test helpers, and alternate code paths (e.g., block reparse vs normal parse).
 
-**3. Trace error variants through concrete scenarios.** After writing the error type and mapping table, pick one concrete input per variant and trace execution step by step. Verify each variant name matches the actual state when it fires. Same syntactic pattern (e.g., `stack.last() → None`) can mean different things in different code paths — don't map mechanically.
+**3. Trace error variants through concrete scenarios.** After writing the error type and mapping table, pick one concrete input per variant. Then trace execution step by step and verify each variant name matches the state when it fires. Same syntactic pattern (e.g., `stack.last() → None`) can mean different things in different code paths, so avoid mechanical mapping.
 
-**4. Ask "what happens if the caller continues?"** For each abort site, before converting: if this error is caught and the program continues, do subsequent operations produce silently wrong results? If yes, keep the abort.
+**4. Ask "what happens if the caller continues?"** For each abort site, check whether catching the error and continuing would make later operations produce silently wrong results. If yes, keep the abort.
 
 ## Checklist
 
 When reviewing error handling in MoonBit code:
 
-- [ ] No `abort` in code reachable from FFI exports (unless corruption-risk)
+- [ ] FFI-reachable code avoids `abort` except for corruption-risk cases
 - [ ] `fail` used only for defect detection, never for input validation
 - [ ] No `catch { _ => () }` or `catch { _ => default }` in library code
 - [ ] Catch blocks in library code rethrow unknown errors (`e => raise e`)
-- [ ] Public APIs use concrete error types (`raise MyError`), not bare `raise`
+- [ ] Public APIs use concrete error types (`raise MyError`) instead of bare `raise`
 - [ ] Functions that mutate shared state and can raise are atomic or rollback-safe
-- [ ] Diagnostics use structured types, not `Array[String]` (except prototyping)
+- [ ] Diagnostics use structured types instead of `Array[String]` (except prototyping)
 - [ ] `noraise` functions audited for `abort` paths
 - [ ] Error variants are semantic (describe what went wrong) with context fields
 - [ ] Error variants traced through concrete scenarios (same syntax ≠ same variant)

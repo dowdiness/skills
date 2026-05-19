@@ -3,15 +3,15 @@ name: moonbit-perf-investigation
 description: Use BEFORE any performance optimization in MoonBit. Requires reproducing the claimed bottleneck in an isolated microbenchmark before designing a solution. Triggers on "optimize", "performance", "bottleneck", "slow", "speed up", or any TODO item citing millisecond costs. Do NOT skip this for "obvious" optimizations.
 ---
 
-# Performance Investigation Gate
+# Performance investigation gate
 
 **HARD RULE:** Never design a performance optimization without first demonstrating the problem exists at measurable scale. This skill MUST run before brainstorming/designing any optimization.
 
-## Why This Exists
+## Why this exists
 
 We spent hours designing and implementing binary lifting jump pointers to replace an Euler Tour + Sparse Table LCA index based on a TODO claim of "3-5ms at 1000 items." Post-implementation benchmarks showed negligible improvement — the figure was stale (from before a prior optimization round) and existing mitigations already neutralized the hot paths.
 
-## The Process
+## The process
 
 ```
 1. Identify the claim     → "X is slow" / "X costs Y ms" / "X is O(bad)"
@@ -26,7 +26,7 @@ We spent hours designing and implementing binary lifting jump pointers to replac
              not improved? → STOP. Wrong approach.
 ```
 
-## Step 1: Identify the Claim
+## Step 1: identify the claim
 
 What specific operation is claimed to be slow? Extract:
 - The **operation** (e.g., "LCA index rebuild")
@@ -34,9 +34,9 @@ What specific operation is claimed to be slow? Extract:
 - The **source** (e.g., "TODO.md §5")
 - The **context** (e.g., "per keystroke during live collaboration")
 
-## Step 2: Check Staleness
+## Step 2: check staleness
 
-**If there is no prior measurement at all** — e.g., the claim is pure asymptotic reasoning ("it's O(n²)") or intuition ("this feels slow") — treat this as worse than stale. Skip to Step 4 and write the microbenchmark. The HARD RULE applies with *more* force when no measurement has ever been taken, not less: there is no data point to verify against, so the benchmark becomes the first evidence either way.
+**If there is no prior measurement at all** — e.g., the claim is pure asymptotic reasoning ("it's O(n²)") or intuition ("this feels slow") — treat this as worse than stale. Skip to Step 4 and write the microbenchmark. With no data point to verify against, the benchmark becomes the first evidence either way.
 
 ```bash
 # When was this measurement taken?
@@ -53,7 +53,7 @@ git log --oneline --since="<measurement_date>" -- <relevant_directory>
 
 If the measurement is stale, say so and suggest re-profiling before designing.
 
-## Step 3: Check Existing Mitigations
+## Step 3: check existing mitigations
 
 Search for batch modes, caching, lazy evaluation, or other mitigations that may already neutralize the problem:
 
@@ -62,9 +62,9 @@ Search for batch modes, caching, lazy evaluation, or other mitigations that may 
 grep -r "batch\|cache\|lazy\|invalidate\|skip\|fast.path" --include="*.mbt" <relevant_directory>
 ```
 
-Ask: "Is this code path actually reached in the hot case, or is it already mitigated?"
+Ask: "Is this code path reached in the hot case, or is it already mitigated?"
 
-## Step 4: Write Microbenchmark
+## Step 4: write the microbenchmark
 
 Write a benchmark that isolates the **exact operation** claimed to be slow. Not a full pipeline benchmark — a microbenchmark.
 
@@ -82,12 +82,12 @@ test "isolate: <operation name> at <N> items" (b : @bench.T) {
 ```
 
 **Rules:**
-- Isolate the single operation, not the full pipeline
+- Isolate the single operation
 - Use realistic data (not trivial 10-item inputs)
 - Use `--release` flag
 - Fresh state per iteration if the operation mutates
 
-## Step 5: Decision Gate
+## Step 5: decision gate
 
 Run the benchmark. Three outcomes:
 
@@ -95,14 +95,14 @@ Run the benchmark. Three outcomes:
 Proceed to prototype a fix. Write 50 lines, benchmark again. If the prototype shows improvement, THEN consider whether a full spec/design cycle is needed.
 
 ### Problem not confirmed (operation is fast)
-**STOP.** Report: "Benchmarked <operation> in isolation at <N> items: <X>µs. The claimed <Y>ms bottleneck is not reproducible. The TODO figure appears stale / already mitigated by <mechanism>."
+**STOP.** Report this finding. "Benchmarked <operation> in isolation at <N> items. Result was <X>µs. The claimed <Y>ms bottleneck is not reproducible. The TODO figure appears stale / already mitigated by <mechanism>."
 
 Suggest: profile the full pipeline to find the actual bottleneck instead.
 
 ### Problem exists but smaller than claimed
 Report the actual cost. Let the user decide if it's worth optimizing. Often it isn't.
 
-## Step 6: Benchmark the Deployment Target
+## Step 6: benchmark the deployment target
 
 `moon bench --release` runs on the wasm-gc backend by default. MoonBit has three backends with very different performance characteristics:
 
@@ -112,7 +112,7 @@ Report the actual cost. Let the user decide if it's worth optimizing. Often it i
 
 A result that shows "no difference" on wasm-gc may show 10-15% on JS, or vice versa. C native results may be dominated by RC overhead. **The deployment target is the one that matters.**
 
-## Anti-Patterns
+## Anti-patterns
 
 | Anti-pattern | Why it's wrong |
 |-------------|---------------|
@@ -122,7 +122,7 @@ A result that shows "no difference" on wasm-gc may show 10-15% on JS, or vice ve
 | "The spec review will catch issues" | Spec reviews check solution correctness, not problem validity. |
 | "It's architecturally cleaner anyway" | That's a refactoring argument, not a performance argument. If the goal is cleanliness, say so — don't dress it up as optimization. |
 
-## MoonBit-Specific Cost Model Notes
+## MoonBit-specific cost model notes
 
 Known codegen facts that affect optimization decisions. Verify with `moon build --target js` (or wasm) before assuming — compiler behavior changes across versions.
 
@@ -178,7 +178,7 @@ Single-level HashMap (NodeInterner pattern: `HashMap[Int, Int]`, 110 calls/iter)
 
 **Why wasm-gc is middle:** GC-managed (no per-assignment RC), but wasm-gc runtime has its own overhead.
 
-**Takeaway:** The JS target is where struct layout optimizations matter most — and Canopy targets the web. Always benchmark the deployment target, not just `moon bench` (which runs wasm-gc by default).
+**Takeaway:** The JS target is where struct layout optimizations matter most — and Canopy targets the web. Always benchmark the deployment target as well as `moon bench`, which runs wasm-gc by default.
 
 ### Benchmarking JS output from MoonBit
 
@@ -186,7 +186,7 @@ Single-level HashMap (NodeInterner pattern: `HashMap[Int, Int]`, 110 calls/iter)
 
 1. Build: `moon build --target js`
 2. Find the output: `find _build/js -name "*.js"`
-3. Extract the generated functions (they're top-level, not exported)
+3. Extract the generated top-level functions
 4. Write a Node.js harness that calls them with `performance.now()`:
 
 ```bash
@@ -209,7 +209,7 @@ This technique caught the 13% tuple struct win that was invisible to `moon bench
 
 This means `#valtype` is only useful for named structs whose fields are all concrete types from the same package or primitives.
 
-## Integration with Brainstorming
+## Integration with brainstorming
 
 When the brainstorming skill is invoked for a performance optimization:
 
@@ -217,4 +217,4 @@ When the brainstorming skill is invoked for a performance optimization:
 2. If the problem is not confirmed, brainstorming should pivot to finding the real bottleneck
 3. If the problem IS confirmed, brainstorming proceeds normally with the benchmark data as input
 
-The benchmark result is the first thing presented in the design: "Measured: <X>µs baseline → target: <Y>µs."
+Present the benchmark result first in the design. Use the form "Measured <X>µs baseline; target <Y>µs."

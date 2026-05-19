@@ -7,3 +7,6 @@
 [submodule "vendor/moonbitlang/moonbit-agent-guide"]
 	path = vendor/moonbitlang/moonbit-agent-guide
 	url = https://github.com/moonbitlang/moonbit-agent-guide.git
+[submodule "vendor/dowdiness/moonbit-skills"]
+	path = vendor/dowdiness/moonbit-skills
+	url = https://github.com/dowdiness/moonbit-skills.git

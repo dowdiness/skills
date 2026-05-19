@@ -9,9 +9,9 @@ description: >
   extensibility trade-offs in MoonBit.
 ---
 
-# Solving the Expression Problem in MoonBit
+# Solving the expression problem in MoonBit
 
-## The Expression Problem
+## The expression problem
 
 The Expression Problem, coined by Philip Wadler in 1998, asks: can you add both new data variants *and* new operations to a datatype, without modifying existing code, while maintaining type safety and separate compilation?
 
@@ -29,15 +29,15 @@ Most languages make one axis easy and the other hard:
 
 MoonBit, with its Self-based traits (no type parameters, no associated types), has a specific set of tools available. This document surveys the solution space, from the most effective approach to partial workarounds.
 
-## Solution 1: Finally Tagless (Primary Recommendation)
+## Solution 1: Finally Tagless (primary recommendation)
 
 Finally Tagless encoding is the most effective solution to the Expression Problem under MoonBit's constraints. It works by representing syntax as **trait method calls** rather than data constructors.
 
-### Naming: The `*Sym` Convention
+### Naming: the `*Sym` convention
 
 Traits in this pattern are named with the `Sym` suffix — `ExprSym`, `TermSym`, `ArithSym`. This comes from **Symantics**, a portmanteau of *syntax* and *semantics* coined by Kiselyov in the original Finally Tagless paper. Each trait method is a syntactic constructor whose meaning (semantics) is supplied by whichever type `Self` is bound to. The name signals this dual role.
 
-### Basic Setup
+### Basic setup
 
 ```moonbit
 trait ExprSym {
@@ -77,7 +77,7 @@ fn example1[T : ExprSym]() -> T {
 }
 ```
 
-### Extending the Data Axis
+### Extending the data axis
 
 To add a new syntactic form (e.g., multiplication), define a **new trait** — no existing code changes:
 
@@ -100,9 +100,9 @@ fn example2[T : ExprSym + MulSym]() -> T {
 }
 ```
 
-### Extending the Operation Axis
+### Extending the operation axis
 
-To add a new operation (e.g., computing expression depth), define a **new struct** and implement all relevant traits — no existing code changes:
+To add a new operation (e.g., computing expression depth), define a **new struct** and provide impls for all relevant traits. Existing code stays unchanged:
 
 ```moonbit
 struct Depth { depth: Int }
@@ -132,7 +132,7 @@ impl MulSym for Depth with mul(a, b) {
 | Simultaneous multiple interpretations | Partial | Requires boilerplate (see below) |
 | Dynamic expression construction | ✗ | Expressions are parametric functions |
 
-### Combining Multiple Interpretations
+### Combining multiple interpretations
 
 To evaluate *and* pretty-print simultaneously, you need a product type:
 
@@ -161,7 +161,7 @@ impl ExprSym for EvalAndShow with neg(a) {
 
 This is repetitive but mechanical. With macro support or code generation, it can be automated.
 
-### Limitations in Detail
+### Limitations in detail
 
 **No structural observation.** The following cannot be written:
 
@@ -175,9 +175,9 @@ fn optimize[T : ExprSym](e: T) -> T {
 }
 ```
 
-**No first-class expression values.** An expression like `example1` is a function `[T : ExprSym]() -> T`, not a storable value. You cannot place it in a data structure or pass it to a function that is not generic.
+**No first-class expression values.** An expression like `example1` is a function `[T : ExprSym]() -> T`, rather than a storable value. You cannot place it in a data structure or pass it to a non-generic function.
 
-## Solution 1b: Extensible Enums (`extenum`, v0.9.2)
+## Solution 1b: extensible enums (`extenum`, v0.9.2)
 
 MoonBit v0.9.2 introduces the `extenum` keyword, which **partially** addresses the data axis directly: an `extenum` declared in package `A` can have new variants added by another package `B` via `+=`, without editing `A`.
 
@@ -220,15 +220,15 @@ When matching an extenum defined in the *current* package, constructor names can
 | Type safety | Partial | Exhaustiveness is enforced *modulo* the mandatory wildcard — silent fallthrough is possible if a consumer forgets to handle a newly-added variant |
 | Separate compilation | ✓ | Plugin packages compile independently |
 
-### When `extenum` Fits
+### When `extenum` fits
 
 - The set of "core" variants is known and stable, but **plugins genuinely need to add variants** in their own packages.
 - Operations are written in well-known sites that can be updated when new variants appear, OR they have sensible fallback behavior (`abort`, "skip unknown nodes", default rendering, etc.).
 - Pattern-matching ergonomics (`match`, destructuring) matter more than compile-time exhaustiveness.
 
-### When `extenum` Does Not Fit
+### When `extenum` does not fit
 
-- You need **statically-verified exhaustiveness** across all current and future variants. The mandatory wildcard arm defeats this — an unhandled variant becomes a runtime concern, not a type error.
+- You need **statically-verified exhaustiveness** across all current and future variants. The mandatory wildcard arm defeats this because an unhandled variant becomes a runtime concern rather than a type error.
 - You need **operation-axis extensibility without coordination**. Each new operation function on `@core.Expr` must still hand-roll arms for every constructor; this is the same enum-axis problem as Solution 2.
 - You want to use type ascription / parametric polymorphism to select among many "interpretations" of the same expression — that is Finally Tagless territory.
 
@@ -243,7 +243,7 @@ When matching an extenum defined in the *current* package, constructor names can
 
 `extenum` is the **closest MoonBit comes to row-polymorphic / open sum types**, but pays for that with mandatory wildcard fallbacks. It complements Finally Tagless rather than replacing it: use `extenum` when you specifically need pattern-matching on plugin-defined variants; use Finally Tagless when you need both axes open without losing exhaustiveness.
 
-## Solution 2: Enum + Trait (Baseline, One-Axis Only)
+## Solution 2: enum + trait (baseline, one-axis only)
 
 For reference, the conventional approach:
 
@@ -261,8 +261,8 @@ fn eval(e: Expr) -> Int {
 }
 ```
 
-**Operation axis**: Easy. Define a new function with a match.
-**Data axis**: Impossible without editing `Expr`.
+**Operation axis:** Define a new function with a match.
+**Data axis:** Adding a variant requires editing `Expr`.
 
 This is not a solution to the Expression Problem, but it is the right choice when:
 
@@ -270,11 +270,11 @@ This is not a solution to the Expression Problem, but it is the right choice whe
 - Pattern matching / structural observation is essential
 - Performance of tree traversal matters
 
-## Solution 3: Two-Layer Architecture (Recommended Hybrid)
+## Solution 3: two-layer architecture (recommended hybrid)
 
 The most practical architecture combines Finally Tagless for extensibility with a concrete AST for structural operations.
 
-### Layer 1: Abstract (Finally Tagless)
+### Layer 1: abstract (Finally Tagless)
 
 ```moonbit
 trait ExprSym {
@@ -287,7 +287,7 @@ trait MulSym {
 }
 ```
 
-### Layer 2: Concrete (Enum, used as one interpretation)
+### Layer 2: concrete (enum, used as one interpretation)
 
 ```moonbit
 enum ConcreteExpr {
@@ -318,7 +318,7 @@ fn replay[T : ExprSym + MulSym](e: ConcreteExpr) -> T {
 }
 ```
 
-### Where the Compromise Lives
+### Where the compromise lives
 
 When a **new variant** is added (e.g., `DivSym`):
 
@@ -337,7 +337,7 @@ If you need both (a) data-axis extensibility by independent plugins and (b) stru
 - **Two-Layer (this solution)** keeps structural passes and exhaustiveness within the owning package, at the cost of an open plugin ecosystem.
 - **`extenum` (Solution 1b, v0.9.2)** delivers both data-axis extensibility *and* structural matching on plugin-defined variants, at the cost of compile-time exhaustiveness (every match needs a wildcard fallback).
 
-Pick by which guarantee you're least willing to give up. Two-Layer remains the right choice when the variant set is owned by the library, structural passes need exhaustiveness, and plugins are expected to live as new *operations*, not new variants.
+Pick the guarantee you are least willing to give up. Two-Layer fits when the variant set is owned by the library, structural passes need exhaustiveness, and plugins are expected to live as new *operations* rather than new variants.
 
 ### Scorecard
 
@@ -349,7 +349,7 @@ Pick by which guarantee you're least willing to give up. Two-Layer remains the r
 | Type safety | ✓ |
 | Optimization passes | ✓ (on ConcreteExpr, then replay) |
 
-## Solution 4: Open Recursion with Function Records
+## Solution 4: open recursion with function records
 
 An alternative to traits — represent the "algebra" as a record of functions:
 
@@ -374,7 +374,7 @@ fn eval_algebra() -> ExprAlgebra {
 - **Con**: No type-level enforcement that all cases are handled
 - **Con**: Extending with a new variant requires a new record type
 
-## Solution 5: Defunctionalized Tagless (Partial Structure Recovery)
+## Solution 5: defunctionalized tagless (partial structure recovery)
 
 Retain *tags* indicating which constructor was used, alongside the computed result:
 
@@ -405,7 +405,7 @@ impl ExprSym for TaggedEval with add(a, b) {
 
 This recovers *shallow* structural information without storing the full tree. Useful for debugging and lightweight profiling.
 
-## Solution 6: Defunctionalized Associated Types (Parameterized Output)
+## Solution 6: defunctionalized associated types (parameterized output)
 
 When a Finally Tagless interpretation needs to produce a **parameterized type** (e.g., `Layout[A]`, `Tree[A]`, `Stream[A]`) where the parameter varies per use case, but MoonBit has no associated types to express this:
 
@@ -448,7 +448,7 @@ let pretty = (replay(term) : PrettyLayout).layout   // Layout[SyntaxCategory]
 let editor = (replay(term) : EditorLayout).layout    // Layout[EditorAnn]
 ```
 
-### Providing a Trait for the Default Case
+### Providing a trait for the default case
 
 The most common parameterization gets a trait for method syntax:
 
@@ -464,14 +464,14 @@ term.to_layout()
 (replay(term) : EditorLayout).layout
 ```
 
-### What This Solves
+### What this solves
 
 This is the Expression Problem applied to **output type parameterization**:
 
 - **Data axis** (new annotation types): add a new struct (e.g., `DebugLayout`) — no existing code changes
 - **Operation axis** (new consumers of Layout): write generic functions over `Layout[A]` — works with any annotation
 
-### Comparison to Other Solutions
+### Comparison to other solutions
 
 | Approach | How associated type is handled |
 |----------|-------------------------------|
@@ -481,7 +481,7 @@ This is the Expression Problem applied to **output type parameterization**:
 
 The tradeoff: you cannot write code generic over "any Pretty interpretation regardless of annotation type." Each consumer must know which struct (and therefore which `A`) it's working with. In practice this is fine — the number of annotation types is small and each consumer knows what context it's in (editor vs LSP vs plain text).
 
-## Theoretical Boundaries
+## Theoretical boundaries
 
 A complete solution to the Expression Problem requires the ability to **abstract over types** — specifically:
 
@@ -498,7 +498,7 @@ The price paid is the inability to observe structure. This is a fundamental trad
 
 The Two-Layer Architecture explicitly manages this trade-off.
 
-## Decision Guide
+## Decision guide
 
 ```
 Is the set of variants fixed?
@@ -518,7 +518,7 @@ Is the set of variants fixed?
       └─ Yes → Defunctionalized Associated Types (Solution 6) + Finally Tagless
 ```
 
-## Complete Example: A Mini Language
+## Complete example: a mini language
 
 ```moonbit
 // ── Syntax traits (extensible) ──
@@ -603,7 +603,7 @@ fn program[T : ArithSym + MulSym]() -> T {
 // Optimized: replay[Pretty](optimize(program[Ast]()))
 ```
 
-## See Also
+## See also
 
 - **`moonbit-traits`** — for trait API design patterns (Self-Closed Algebra, Fixed-Type Projection, Capability Traits, Callbacks/CPS, Trait Multiplication, Newtypes, Visitor). Use when the question is "how do I design a trait API?" rather than "how do I make extensible data + operations?"
 

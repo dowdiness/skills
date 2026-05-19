@@ -3,7 +3,7 @@ name: moonbit-agent-setup
 description: Set up MoonBit project instructions and agent configuration for coding assistants. Use when bootstrapping agent guidance, validation commands, hooks, project conventions, or shared MoonBit context for Codex, Claude Code, or other agent environments.
 ---
 
-# MoonBit Agent Setup
+# MoonBit agent setup
 
 Create project-level agent instructions for a MoonBit repository. Keep the core guidance agent-neutral, then apply the adapter for the active agent only when the user wants tool-specific files or hooks.
 
@@ -15,7 +15,7 @@ Create project-level agent instructions for a MoonBit repository. Keep the core 
 4. Add optional validation hooks only for agents that support them.
 5. Verify the generated files and run a MoonBit sanity check.
 
-## Step 1: Detect Project Structure
+## Step 1: detect project structure
 
 Scan from the working directory:
 
@@ -28,7 +28,7 @@ test -f .gitmodules && cat .gitmodules
 
 Record module names, package paths, test locations, docs directories, and submodule presence.
 
-## Step 2: Select Adapter
+## Step 2: select adapter
 
 Use one adapter:
 
@@ -46,13 +46,13 @@ Reference files:
 - Claude Code: read `references/claude-code.md`.
 - Generic or unknown agent: read `references/generic-agent.md`.
 
-## Step 3: Generate Core Content
+## Step 3: generate core content
 
 Every adapter should include the same project-specific information:
 
 - Project title and one-line purpose.
 - Module and package commands discovered from `moon.mod.json`.
-- MoonBit-specific gotchas that are project-specific, not generic language rules.
+- MoonBit-specific gotchas tied to this project.
 - Documentation rules if `docs/` exists.
 - Development workflow rules that cannot be enforced mechanically.
 - Pointers to local scripts and reference docs.
@@ -64,7 +64,7 @@ Keep generated instruction files short. Put stable shared MoonBit conventions in
 
 Use an import only when the target agent supports that instruction-file syntax. Otherwise, summarize the relevant rules briefly and point to the base file.
 
-## Step 4: Merge Idempotently
+## Step 4: merge idempotently
 
 If the target file already exists:
 
@@ -82,7 +82,7 @@ If adding JSON config for an adapter:
 4. Preserve unrelated keys.
 5. Never overwrite the entire file.
 
-## Step 5: Verify
+## Step 5: verify
 
 Run the checks that match the generated adapter:
 
@@ -102,7 +102,7 @@ If an instruction file was generated or merged, inspect the first section order:
 head -80 <instruction-file>
 ```
 
-## Common Mistakes
+## Common mistakes
 
 | Mistake | Fix |
 |---------|-----|

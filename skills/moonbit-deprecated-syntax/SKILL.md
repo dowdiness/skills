@@ -3,11 +3,11 @@ name: moonbit-deprecated-syntax
 description: Tracks deprecated MoonBit syntax to avoid generating invalid code. Reference this before writing MoonBit code. Auto-maintained when deprecated patterns are discovered.
 ---
 
-# MoonBit Deprecated Syntax
+# MoonBit deprecated syntax
 
 Reference this skill before writing MoonBit code. Using deprecated syntax causes warnings, and CI configurations with `-w @a` (warnings as errors) will fail.
 
-## Deprecated Patterns
+## Deprecated patterns
 
 | Deprecated | Replacement | Notes |
 |-----------|-------------|-------|
@@ -34,7 +34,7 @@ Reference this skill before writing MoonBit code. Using deprecated syntax causes
 | `Show::to_string` on Option / Result / Array / Map / Set / tuple | `Debug::to_string` (via `derive(Debug)`) + `@debug.assert_eq` | Container `Show` impls being phased out per v0.9.2 release notes. Verified deprecation observed on `Option` in `moonc` 0.1.20260427; broader container deprecations may not have shipped yet — check `moon check` output. `Show::output` is now consistent with `Show::to_string` (both unquoted) for `String`/`Char` |
 | `options("pre-build": ...)` in moon.pkg | `rule()` / `dev_build()` in `moon.mod` | v0.9.2 build rules: structured `rule()` / `dev_build()` declarations are reusable across packages |
 
-## API Patterns
+## API patterns
 
 | Don't use | Use instead | Notes |
 |-----------|-------------|-------|
@@ -43,7 +43,7 @@ Reference this skill before writing MoonBit code. Using deprecated syntax causes
 | `@math.ln(x)` | `@math.ln(x)` | Method `.ln()` doesn't exist on Double |
 | `Array::init(n, fn)` | `Array::makei(n, fn)` | Check which is available |
 
-## Loop Syntax Guide
+## Loop syntax guide
 
 ```moonbit
 // DEPRECATED — being removed
@@ -89,9 +89,9 @@ for x in xs {
 | Index-based iteration with state | C-style `for i = 0, acc = 0; ...` |
 | Simple aggregation, no pattern matching needed | `for x in xs` with `let mut` |
 
-## v0.9.2 Removed Syntax (no longer compiles)
+## v0.9.2 removed syntax (no longer compiles)
 
-These are **hard removals** — they fail compilation, not just emit warnings:
+These **hard removals** fail compilation instead of emitting warnings:
 
 ```moonbit
 // REMOVED — old newtype declaration
@@ -127,9 +127,15 @@ fn outer() -> Bool {
 
 The compiler emits warning [0027] on the old form with the exact migration hint: *"Use `letrec f = fn(a, b) { ... } and g = fn(...) { ... }` instead."* Both forms verified against `moonc` 0.1.20260427.
 
-## v0.9.2 Struct Constructor (deprecated dual-signature form)
+## v0.9.2 struct constructor (deprecated dual-signature form)
 
-v0.9.2 simplifies struct constructor declarations: define the constructor directly as `fn Type::Type(params) -> Type { .. }` without the verbose dual-signature boilerplate. The old form still compiles but emits deprecation warnings.
+v0.9.2 simplifies struct constructor declarations. Define the constructor directly as one method:
+
+```moonbit
+fn Type::Type(params) -> Type { .. }
+```
+
+The old form still compiles but emits deprecation warnings.
 
 ```moonbit
 // PREFERRED — define the constructor directly as one method
@@ -138,8 +144,8 @@ fn MyStruct::MyStruct(x : Int, y : Int) -> MyStruct {
 }
 ```
 
-This is the documented default in `moonbit-base.md` and `moonbit-opaque-types`. If you encounter the older form in existing code and see a deprecation warning, replace it with the direct `fn Type::Type(...) { ... }` declaration.
+This is the documented default in `moonbit-base.md` and `moonbit-opaque-types`. If existing code uses the older form and emits a deprecation warning, replace it with the direct constructor method form.
 
-## How This Skill Is Maintained
+## How this skill is maintained
 
 When a new deprecated pattern is discovered (e.g., CI fails with `deprecated` warning, or user corrects syntax), add it to the table above with the replacement.

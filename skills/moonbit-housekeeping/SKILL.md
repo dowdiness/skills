@@ -8,7 +8,7 @@ description: >
   for direction, and before releases.
 ---
 
-# MoonBit Housekeeping
+# MoonBit housekeeping
 
 Five subcommands covering two concerns: **code health** (default, check, fix) and **project direction** (triage, release).
 
@@ -21,7 +21,7 @@ Five subcommands covering two concerns: **code health** (default, check, fix) an
 - `moonbit-housekeeping release` — pre-release prep: changelog + api-review + doc-drift. Does **not** re-check git / lint / build / test; run `moonbit-housekeeping` first if those have not been verified.
 - `moonbit-housekeeping help` — display TUTORIAL.md
 
-## When to Use
+## When to use
 
 - **Start of session** -> `moonbit-housekeeping` (most common)
 - **Read-only glance** -> `moonbit-housekeeping check`
@@ -93,7 +93,7 @@ Render the unified report (format below). If fixable items exist in report mode,
 
 ---
 
-## Mechanical Worker Prompt Template
+## Mechanical worker prompt template
 
 ~~~
 You are a housekeeping agent for a MoonBit project. Run mechanical repo checks and output structured JSON.
@@ -214,7 +214,7 @@ REMEMBER: Response = JSON object only. No preamble, no trailing commentary.
 
 ---
 
-## Triage Worker Prompt Template
+## Triage worker prompt template
 
 ~~~
 You are a triage agent for a MoonBit project. Assess backlog freshness, identify stale branches, and produce project direction output as structured JSON.
@@ -340,7 +340,7 @@ Output a plain text summary: what was pruned, what was skipped and why.
 
 ---
 
-## Release Worker Prompt Templates
+## Release worker prompt templates
 
 Three review workers run in parallel when supported. Each outputs structured JSON.
 
@@ -561,9 +561,9 @@ decisions-needed: updated  ({N} added, {N} resolved)
 3. {recommendation 3}
 ```
 
-If prune_candidates is non-empty, show the list and ask: "Prune these branches/worktrees? [y/N]"
+If prune_candidates is non-empty, show the list and ask whether to prune those branches/worktrees.
 
-### Decisions-Needed Format (coordinator writes this after triage)
+### Decisions-needed format (coordinator writes this after triage)
 
 Read `docs/decisions-needed.md` if it exists. Then:
 - **Add** items with `classification: needs-human-review` not already present
@@ -637,7 +637,7 @@ If MODE was "report" and fixable items exist:
 
 ---
 
-## Fix Mode Whitelist
+## Fix mode whitelist
 
 ONLY these operations are allowed in fix mode:
 - `moon fmt` — reformat .mbt files (deterministic, reversible)
@@ -653,6 +653,6 @@ Branch/worktree pruning is handled by the triage prune worker after explicit use
 - Default mode is **read-only**. Phase 2 changes are reverted after phase 3 in report mode.
 - Tool-call limits in worker templates prevent runaway execution.
 - Dynamic discovery (`.gitmodules`, `moon.mod.json`) prevents hardcoded staleness.
-- Build failures in `examples/web/` due to missing `node_modules` are reported as skipped, not failed.
+- Classify build failures in `examples/web/` due to missing `node_modules` as skipped.
 - If `gh` CLI is not available, PR and issue checks are skipped gracefully.
 - Branch pruning uses `git branch -d` (safe delete) — never `git branch -D` (force).

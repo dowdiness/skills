@@ -11,7 +11,7 @@ description: >
   `moonbit-refactoring`, which covers *what* to refactor toward.
 ---
 
-# MoonBit Refactoring Safety
+# MoonBit refactoring safety
 
 Three execution disciplines for refactors where the *direction* is decided but the *transition* is where bugs hide: pre-refactor invariant tests, file splits, and the facade-and-internals package split. Each replaces eyeball verification ("did I move everything? does it still work?") with something the compiler or test runner enforces.
 
@@ -35,9 +35,9 @@ If you're hiding internals behind a permanent facade, this skill supersedes the 
 
 If the task is "refactor this code to be more idiomatic" (rename, pattern matching, method conversion, loop style), use `moonbit-refactoring` instead — those changes are local and the compiler catches the breakage. This skill kicks in when the change touches *boundaries* (files, packages, public API).
 
-## 1. Safety Net: Property Tests Before Structural Changes
+## 1. Safety net: property tests before structural changes
 
-Before a refactor that crosses a file or package boundary, write property tests that pin the behavioral invariants the refactor must preserve. Once the structure moves, you want the test suite — not your memory — telling you what broke. Strongly recommended for any refactor that touches non-trivial behavior; can be skipped for purely-mechanical extractions of pure code where the invariant ("this function still returns the same value") is obvious from the type.
+Before a refactor that crosses a file or package boundary, write property tests that pin the behavioral invariants the refactor must preserve. Once the structure moves, the test suite should tell you what broke. This is strongly recommended for any refactor that touches non-trivial behavior; skip it only for purely mechanical extractions of pure code where the invariant ("this function still returns the same value") is obvious from the type.
 
 Verified pattern using `moonbitlang/core/quickcheck`:
 
@@ -65,11 +65,11 @@ import {
 - If a sample needs validation (e.g., a `Pos` that rejects negatives), call the validating constructor and `unwrap()` — **never** write `Err(_) => return` or `None => continue` to silently skip. A silently-skipped sample turns the property test into a no-op that passes for the wrong reason; refactors then break under load and the tests don't notice.
 - If valid inputs are hard to generate, that itself is a refactor smell — the constructor is doing too much or the invariants aren't where they should be.
 
-**Why this step matters for boundary refactors:** unit tests pin local behavior, but boundary refactors change *which side* of a boundary owns a piece of logic. The unit test that exercised the old owner may pass against the new owner for the wrong reason (different code path, same answer). Properties cross the boundary; unit tests don't.
+**Why this step matters for boundary refactors:** unit tests pin local behavior, but boundary refactors change *which side* of a boundary owns a piece of logic. The unit test that exercised the old owner may pass against the new owner for the wrong reason (different code path, same answer). Properties cross the boundary; unit tests do not.
 
 > **Verified:** `@qc.quick_check_fn` does **not** exist in `moonbitlang/core/quickcheck`. Earlier MoonBit refactoring guidance referenced it; if you see that name in older docs, it was either a project-specific helper or aspirational. The actual API is `gen` (single value) and `samples` (Array). Build a property test by iterating over `samples`.
 
-## 2. File Splits: Delete-First Technique
+## 2. File splits: delete-first technique
 
 When splitting a large `.mbt` file into smaller focused files within the same package, **delete the original after extracting the sections**, then run `moon check`. The compiler will enumerate every missing definition. This is faster and more reliable than verifying line-range extractions by counting.
 
@@ -85,11 +85,11 @@ moon check
 
 **Never** verify a file split by comparing line counts (`wc -l` before/after, "the totals match"). A line count match proves nothing — you can have duplicated content in two files, or have moved comments while losing code, and the counts will agree.
 
-**Why this works:** MoonBit treats files within a package as organizational units, not separate modules. A symbol moved between files in the same package needs no import update — the compiler simply finds it (or doesn't). The "doesn't" case is the entire signal you need.
+This works because MoonBit treats files within a package as organizational units, not separate modules. A symbol moved between files in the same package needs no import update. The compiler either finds it or reports the missing symbol, which is the signal you need.
 
 **When to skip:** if the file is small enough to read top-to-bottom in one screen, just move it and verify visually. The delete-first technique pays off when the file is large enough that you can't trust a visual scan.
 
-## 3. Facade + Internals Package Split: Six Steps
+## 3. Facade + internals package split: six steps
 
 Splitting package `A` (the existing public package) by extracting its internals into a new package located under `A/internal/`. `A` becomes a thin facade re-exporting the internal package's public surface, so existing consumers continue compiling unchanged — **and**, because MoonBit enforces `internal/` visibility at the language level, downstream consumers cannot bypass the facade by importing the internals directly. Each step exposes one specific failure mode.
 
@@ -130,19 +130,19 @@ let s : @A.MyType = @A.MyType()   // custom constructor through facade
 s.method()                         // method through facade
 ```
 
-both work without listing `MyType::method` or `MyType::MyType` separately. Methods don't need to be listed individually — listing the type pulls them along. Functions, constants, and traits must be listed by name.
+both work without listing `MyType::method` or `MyType::MyType` separately. Listing the type pulls its methods along. Functions, constants, and traits must be listed by name.
 
-**`pub using` forwards names, not permissions.** A `pub struct S` is read-only to external code (fields readable, but external code cannot construct `S::{...}` or write `mut` fields). Re-exporting does not change that — consumers of `@A` see the same visibility they would see importing directly from the internal package. If external construction or field mutation is required, declare the origin as `pub(all) struct S`, or expose a constructor / mutator method.
+**`pub using` forwards names, not permissions.** A `pub struct S` is read-only to external code. Fields are readable, but external code cannot construct `S::{...}` or write `mut` fields. Re-exporting preserves that visibility, so consumers of `@A` see the same access they would see importing directly from the internal package. If external construction or field mutation is required, declare the origin as `pub(all) struct S`, or expose a constructor / mutator method.
 
 ### Step 3 — Expect private-symbol errors
 
-After steps 1 and 2, `moon check` will report errors at every private function inside the internal package that used to live next to its caller (which is now in `A`). The error reads as **"Value X not found in package <internal-name>"** — the compiler treats private symbols as if they don't exist from outside, rather than emitting a separate "private" diagnostic. **This is the point** — the split reveals hidden coupling that was invisible while everything was in one package.
+After steps 1 and 2, `moon check` will report errors at every private function inside the internal package that used to live next to its caller (which is now in `A`). The error reads as **"Value X not found in package <internal-name>"**. The compiler treats private symbols as if they do not exist from outside, rather than emitting a separate "private" diagnostic. The split exposes hidden coupling that was invisible while everything lived in one package.
 
-Fix by making necessary functions `pub` in the internal package. `A` can then use them through `pub using` or directly via the `@internal_store.` prefix. There's no risk of leaking these `pub`s to downstream — the `internal/` rule keeps them inside the module.
+Fix by making necessary functions `pub` in the internal package. `A` can then use them through `pub using` or directly via the `@internal_store.` prefix. The `internal/` rule keeps those `pub`s inside the module, so they do not leak to downstream consumers.
 
 **Note on direction:** errors flow `A → internal` (caller now in `A`, callee private in the internal package). The reverse direction (internal package calling something private in `A`) cannot occur — that would require the internal package to import `A`, but `A` already imports it, and the compiler hard-rejects the cycle with **"Import loop detected"**. Internals never depend on facade.
 
-**Don't preempt step 3.** Resist the urge to `pub` everything in step 1. The errors are the inventory of what actually needs to cross the boundary — usually a smaller set than you'd guess.
+Let step 3 surface the needed `pub` changes. Publishing everything in step 1 hides the inventory of what needs to cross the boundary, usually a smaller set than you would guess.
 
 ### Step 4 — Verify `.mbti` stability
 
@@ -175,11 +175,11 @@ import { "dowdiness/myproj/internal/store" @store }
 // Build fails: "Cannot import internal package ... due to internal visibility rules"
 ```
 
-If this *succeeds*, something is wrong — check the path actually contains a literal `internal` segment, and that the consumer is in a different module (not just a different package within the same module).
+If this *succeeds*, something is wrong. Check that the path contains a literal `internal` segment, and that the consumer is in a different module rather than a different package within the same module.
 
 ### Step 6 — Audit and trim the facade
 
-Walk the facade with `moon ide analyze` and remove any `pub using` entry that ended up unused, plus any `pub` in the internal package that no longer has a caller in `A`. Unlike a visible-extraction split, you don't expect consumers to migrate away from `@A.X` — the `internal/` boundary is permanent — so the facade's `pub using` block is the long-term API surface, not a transitional shim.
+Walk the facade with `moon ide analyze` and remove any `pub using` entry that ended up unused, plus any `pub` in the internal package that no longer has a caller in `A`. Unlike a visible-extraction split, consumers are expected to keep using `@A.X`. The `internal/` boundary is permanent, so the facade's `pub using` block is the long-term API surface rather than a transitional shim.
 
 ### Variant: visible-extraction split (for renaming/restructuring)
 

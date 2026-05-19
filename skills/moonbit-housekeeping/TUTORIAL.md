@@ -1,6 +1,6 @@
-# Housekeeping Tutorial
+# Housekeeping tutorial
 
-## When to Use Which Subcommand
+## When to use which subcommand
 
 ```
 Opening a session?           -> moonbit-housekeeping          (most common)
@@ -53,7 +53,7 @@ Clean up these branches/worktrees? [y/N]
 
 Quick sanity check. Answers: **"is my repo in a clean state right now?"**
 
-Checks git state, submodules, and lint. No modifications; read-only. Uses a mechanical worker profile.
+It checks git state, submodules, and lint. It makes no modifications and uses a mechanical worker profile.
 
 Use when you just want a **quick glance** without touching anything.
 
@@ -104,7 +104,7 @@ Use **weekly** or when returning after a break and feeling unsure what to tackle
 
 ### `moonbit-housekeeping release` - pre-release prep
 
-Answers: **"is this ready to ship?"**
+Answers whether the release is ready to ship.
 
 Runs three checks:
 
@@ -116,7 +116,7 @@ Use **before tagging a release or opening a major PR**. Uses review worker profi
 
 ---
 
-## Understanding the Output
+## Understanding the output
 
 ### Status levels
 

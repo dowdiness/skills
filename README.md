@@ -60,6 +60,7 @@ npm run uninstall-local
 | `moonbit-verification` | manual | MoonBit quality checklist for dependencies, syntax, tests, and interfaces. |
 | `incr` | vendor | User-owned library skill for the `dowdiness/incr` reactive library. |
 | `loom` | vendor | User-owned library skill for the `dowdiness/loom` parser framework. |
+| `handoff` | manual | End-of-session ritual for memory updates, next-session prompts, and clear readiness. |
 | `tuple-wrapper-api-style` | manual | Tuple wrapper API style for stable public constructors and concise internals. |
 
 ## Repository Layout

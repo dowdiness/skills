@@ -27,6 +27,7 @@ export const skills: SkillMeta[] = [
   { name: 'moonbit-verification', kind: 'manual', source: 'dowdiness/moonbit-skills' },
   { name: 'incr', kind: 'vendor', source: 'https://github.com/dowdiness/incr', vendorPath: 'vendor/dowdiness/incr', sourceSkillPath: 'vendor/dowdiness/incr/skills/incr/SKILL.md', outputPath: 'skills/incr/SKILL.md', notes: 'User-owned library skill copied from the local incr project context.' },
   { name: 'loom', kind: 'vendor', source: 'https://github.com/dowdiness/loom', vendorPath: 'vendor/dowdiness/loom', sourceSkillPath: 'vendor/dowdiness/loom/skills/loom/SKILL.md', outputPath: 'skills/loom/SKILL.md', notes: 'User-owned library skill copied from the local loom project context.' },
+  { name: 'handoff', kind: 'manual', source: '~/.agents/skills/handoff' },
   { name: 'tuple-wrapper-api-style', kind: 'manual', source: '~/.agents/skills/tuple-wrapper-api-style' },
 ]
 

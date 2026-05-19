@@ -15,13 +15,28 @@ pnpx skills add dowdiness/skills --skill='*'
 For local development on this machine:
 
 ```bash
-./install.sh
+./scripts/install.sh
 ```
 
 This symlinks every directory in `skills/` into:
 
 - `~/.agents/skills/`
 - `~/.claude/skills/`
+
+## Uninstallation
+
+Remove only symlinks that point back to this repository:
+
+```bash
+./scripts/uninstall.sh
+```
+
+The same actions are also available through npm:
+
+```bash
+npm run install-local
+npm run uninstall-local
+```
 
 ## Skills
 

@@ -2,7 +2,9 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "install-local": "bash scripts/install.sh",
     "list": "node scripts/list.mjs",
+    "uninstall-local": "bash scripts/uninstall.sh",
     "validate": "node scripts/validate.mjs"
   }
 }

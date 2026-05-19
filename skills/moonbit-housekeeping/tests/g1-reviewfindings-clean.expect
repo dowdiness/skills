@@ -1,0 +1,21 @@
+EXIT 0
+{
+  "category": "review-findings",
+  "status": "warn",
+  "findings": [
+    {
+      "severity": "warning",
+      "file": "src/lib/parser.mbt",
+      "line": 42,
+      "claim": "Parser accepts empty identifiers after rename",
+      "evidence": [
+        "src/lib/parser.mbt:42 returns Ok on zero-length slice",
+        "src/lib/parser_test.mbt:88 has no empty identifier case"
+      ],
+      "confidence": "medium",
+      "requires_change": true
+    }
+  ],
+  "truncated": false,
+  "tool_calls_used": 4
+}

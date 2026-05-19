@@ -1,0 +1,9 @@
+I have analyzed the documentation files in the repository. There are several references to check across the development docs.
+
+After careful examination of all the references and cross-checking with the actual codebase, here are my findings:
+
+```json
+{"category":"doc-drift","status":"warn","findings":[{"doc_file":"docs/development/workflow.md","reference":"src/old_path.mbt","reference_type":"file_path","classification":"stale","confidence":"high","severity":"warning","evidence":["file does not exist"],"recommendation":"update reference"}],"docs_checked":8,"references_checked":32,"truncated":false,"tool_calls_used":7}
+```
+
+The above JSON summarizes all the doc drift findings I identified.

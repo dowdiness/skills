@@ -1,0 +1,29 @@
+EXIT 0
+{
+  "category": "changelog",
+  "status": "pass",
+  "base": {
+    "type": "tag",
+    "value": "v0.2.0"
+  },
+  "total_commits": 3,
+  "suggested_bump": "minor",
+  "bump_confidence": "medium",
+  "sections": [
+    {
+      "type": "added",
+      "entries": [
+        {
+          "description": "New feature X",
+          "commits": [
+            "abc1234"
+          ],
+          "breaking": false
+        }
+      ]
+    }
+  ],
+  "skipped_commits": [],
+  "truncated": false,
+  "tool_calls_used": 4
+}

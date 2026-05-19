@@ -1,0 +1,27 @@
+EXIT 0
+{
+  "category": "api-review",
+  "status": "pass",
+  "findings": [
+    {
+      "file": "pkg.generated.mbti",
+      "change_type": "added",
+      "symbol": "pub fn foo() -> Unit",
+      "classification": "intentional",
+      "confidence": "high",
+      "severity": "info",
+      "evidence": [
+        "recent commit added this"
+      ],
+      "breaking": false
+    }
+  ],
+  "summary": {
+    "added": 1,
+    "removed": 0,
+    "modified": 0,
+    "breaking_changes": 0
+  },
+  "truncated": false,
+  "tool_calls_used": 5
+}

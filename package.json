@@ -1,0 +1,8 @@
+{
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "list": "node scripts/list.mjs",
+    "validate": "node scripts/validate.mjs"
+  }
+}

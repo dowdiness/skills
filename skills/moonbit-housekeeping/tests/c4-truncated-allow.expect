@@ -1,0 +1,17 @@
+EXIT 0
+ARGS: --allow-partials
+{
+  "category": "changelog",
+  "status": "pass",
+  "base": {
+    "type": "tag",
+    "value": "v0.1.0"
+  },
+  "total_commits": null,
+  "suggested_bump": null,
+  "bump_confidence": null,
+  "sections": [],
+  "skipped_commits": null,
+  "truncated": null,
+  "tool_calls_used": null
+}

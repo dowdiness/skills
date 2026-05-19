@@ -1,0 +1,30 @@
+EXIT 0
+ARGS: --root ApiReview
+{
+  "category": "api-review",
+  "status": "warn",
+  "findings": [
+    {
+      "file": "src/lib.mbti",
+      "change_type": "modified",
+      "symbol": "pub fn process() -> Unit",
+      "classification": "needs-review",
+      "confidence": "medium",
+      "severity": "warning",
+      "evidence": [
+        "**bold evidence** in the finding",
+        "# heading style note",
+        "regular evidence item"
+      ],
+      "breaking": false
+    }
+  ],
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "modified": 1,
+    "breaking_changes": 0
+  },
+  "truncated": false,
+  "tool_calls_used": 3
+}

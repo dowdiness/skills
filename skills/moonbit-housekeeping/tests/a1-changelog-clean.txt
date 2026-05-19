@@ -1,0 +1,1 @@
+{"category":"changelog","status":"pass","base":{"type":"tag","value":"v0.1.0"},"total_commits":5,"suggested_bump":"patch","bump_confidence":"high","sections":[],"skipped_commits":[],"truncated":false,"tool_calls_used":3}

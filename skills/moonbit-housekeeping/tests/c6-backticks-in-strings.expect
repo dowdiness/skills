@@ -1,0 +1,29 @@
+EXIT 0
+{
+  "category": "changelog",
+  "status": "pass",
+  "base": {
+    "type": "tag",
+    "value": "v0.1.0"
+  },
+  "total_commits": 1,
+  "suggested_bump": "patch",
+  "bump_confidence": "high",
+  "sections": [
+    {
+      "type": "fixed",
+      "entries": [
+        {
+          "description": "Fix usage of ```bash code blocks``` in documentation",
+          "commits": [
+            "bbb1234"
+          ],
+          "breaking": false
+        }
+      ]
+    }
+  ],
+  "skipped_commits": [],
+  "truncated": false,
+  "tool_calls_used": 1
+}

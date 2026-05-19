@@ -1,0 +1,11 @@
+EXIT 0
+ARGS: --root DocDrift
+{
+  "category": "doc-drift",
+  "status": "pass",
+  "findings": [],
+  "docs_checked": 5,
+  "references_checked": 20,
+  "truncated": false,
+  "tool_calls_used": 4
+}

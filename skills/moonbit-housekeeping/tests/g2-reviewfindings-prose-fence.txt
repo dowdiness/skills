@@ -1,0 +1,7 @@
+I found one issue worth preserving for the parent review.
+
+```json
+{"category":"review-findings","status":"warn","findings":[{"severity":"error","file":"src/api.mbt","claim":"Public constructor now bypasses validation","evidence":["src/api.mbt:17 exposes UserId::new directly","src/api_test.mbt:31 only covers checked constructor"],"confidence":"high","requires_change":true}],"truncated":false,"tool_calls_used":5}
+```
+
+Everything else looked consistent with the intended refactor.

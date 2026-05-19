@@ -1,0 +1,29 @@
+EXIT 0
+{
+  "category": "changelog",
+  "status": "pass",
+  "base": {
+    "type": "tag",
+    "value": "v0.3.0"
+  },
+  "total_commits": 2,
+  "suggested_bump": "patch",
+  "bump_confidence": "high",
+  "sections": [
+    {
+      "type": "fixed",
+      "entries": [
+        {
+          "description": "日本語の説明テキストを修正しました",
+          "commits": [
+            "cafe123"
+          ],
+          "breaking": false
+        }
+      ]
+    }
+  ],
+  "skipped_commits": [],
+  "truncated": false,
+  "tool_calls_used": 2
+}

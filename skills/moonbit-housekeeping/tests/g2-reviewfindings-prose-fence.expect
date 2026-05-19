@@ -1,0 +1,21 @@
+EXIT 0
+{
+  "category": "review-findings",
+  "status": "warn",
+  "findings": [
+    {
+      "severity": "error",
+      "file": "src/api.mbt",
+      "line": null,
+      "claim": "Public constructor now bypasses validation",
+      "evidence": [
+        "src/api.mbt:17 exposes UserId::new directly",
+        "src/api_test.mbt:31 only covers checked constructor"
+      ],
+      "confidence": "high",
+      "requires_change": true
+    }
+  ],
+  "truncated": false,
+  "tool_calls_used": 5
+}

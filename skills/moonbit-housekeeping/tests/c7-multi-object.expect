@@ -1,0 +1,16 @@
+EXIT 0
+{
+  "category": "changelog",
+  "status": "pass",
+  "base": {
+    "type": "tag",
+    "value": "v1.0.0"
+  },
+  "total_commits": 10,
+  "suggested_bump": "minor",
+  "bump_confidence": "high",
+  "sections": [],
+  "skipped_commits": [],
+  "truncated": false,
+  "tool_calls_used": 5
+}

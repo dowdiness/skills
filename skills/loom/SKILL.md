@@ -1,0 +1,1 @@
+/home/antisatori/ghq/github.com/dowdiness/canopy/loom/skills/loom.md

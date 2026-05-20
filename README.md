@@ -61,6 +61,7 @@ npm run uninstall-local
 | `incr` | vendor | User-owned library skill for the `dowdiness/incr` reactive library. |
 | `loom` | vendor | User-owned library skill for the `dowdiness/loom` parser framework. |
 | `handoff` | manual | End-of-session ritual for memory updates, next-session prompts, and clear readiness. |
+| `orchestrate` | manual | Cross-repo and multiagent session setup with delegation checkpoints and worker-output intake. |
 | `tuple-wrapper-api-style` | manual | Tuple wrapper API style for stable public constructors and concise internals. |
 
 ## Repository Layout

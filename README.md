@@ -20,10 +20,23 @@ cd skills
 ./scripts/install.sh
 ```
 
+If duplicates still exist from previous sessions, run the repair pass first:
+
+```bash
+./scripts/install.sh --repair
+```
+
+This backs up conflicting paths to:
+
+`$HOME/.local/share/dowdiness-skills-backup/<timestamp>`
+
+Then rerun `./scripts/install.sh` for strict mode.
+
 This symlinks every directory in `skills/` into:
 
 - `~/.agents/skills/`
 - `~/.claude/skills/`
+- `~/.codex/skills/`
 
 ## Uninstallation
 
@@ -32,6 +45,45 @@ Remove only symlinks that point back to this repository:
 ```bash
 ./scripts/uninstall.sh
 ```
+
+## Repair duplicate skills safely
+
+If you encounter duplicate or leftover skill paths in agent directories, use the cleanup script in dry-run mode first:
+
+```bash
+./scripts/cleanup-duplicate-skills.sh
+```
+
+If the listed entries are expected duplicates, apply the move to backup:
+
+```bash
+./scripts/cleanup-duplicate-skills.sh --apply
+```
+
+Then re-run local installation:
+
+```bash
+./scripts/install.sh
+```
+
+To rollback from a previous backup directory, use:
+
+```bash
+./scripts/cleanup-duplicate-skills.sh --restore <backup-dir>
+```
+
+To verify duplicate state without moving files, use:
+
+```bash
+./scripts/cleanup-duplicate-skills.sh --check
+```
+
+The cleanup script is conservative:
+
+- it only targets directories that match skill names in `skills/`
+- it keeps symlinks that already point to this repository
+- it skips unrelated files/dirs so only confirmed duplicates are moved
+- it places moved entries under a timestamped backup directory for easy restore
 
 The same actions are also available through npm:
 

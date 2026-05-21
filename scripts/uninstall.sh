@@ -21,3 +21,4 @@ remove_links() {
 
 remove_links "$HOME/.agents/skills"
 remove_links "$HOME/.claude/skills"
+remove_links "$HOME/.codex/skills"

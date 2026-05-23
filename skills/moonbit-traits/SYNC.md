@@ -1,6 +1,6 @@
 # Sync Info
 
 - **Source:** `vendor/dowdiness/moonbit-skills/moonbit-traits`
-- **Git SHA:** `d2dcede40dad14241d051a4c046df348ed2ab903`
-- **Synced:** 2026-05-20
+- **Git SHA:** `41b7d8ebf0769fff62d0229bfb6691c2ab6017e7`
+- **Synced:** 2026-05-23
 

@@ -11,7 +11,7 @@ export interface SkillMeta {
 }
 
 export const skills: SkillMeta[] = [
-  { name: 'moonbit', kind: 'manual', source: '~/.agents/skills/moonbit' },
+  { name: 'moonbit', kind: 'manual', source: 'in-tree' },
   { name: 'moonbit-agent-guide', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide', vendorPath: 'vendor/moonbitlang/moonbit-agent-guide', sourceSkillPath: 'vendor/moonbitlang/moonbit-agent-guide/moonbit-agent-guide/SKILL.md', outputPath: 'skills/moonbit-agent-guide/SKILL.md' },
   { name: 'moonbit-c-binding', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide', vendorPath: 'vendor/moonbitlang/moonbit-agent-guide', sourceSkillPath: 'vendor/moonbitlang/moonbit-agent-guide/moonbit-c-binding/SKILL.md', outputPath: 'skills/moonbit-c-binding/SKILL.md' },
   { name: 'moonbit-refactoring', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide', vendorPath: 'vendor/moonbitlang/moonbit-agent-guide', sourceSkillPath: 'vendor/moonbitlang/moonbit-agent-guide/moonbit-refactoring/SKILL.md', outputPath: 'skills/moonbit-refactoring/SKILL.md' },
@@ -27,9 +27,9 @@ export const skills: SkillMeta[] = [
   { name: 'moonbit-verification', kind: 'vendor', source: 'https://github.com/dowdiness/moonbit-skills', vendorPath: 'vendor/dowdiness/moonbit-skills', sourceSkillPath: 'vendor/dowdiness/moonbit-skills/moonbit-verification/SKILL.md', outputPath: 'skills/moonbit-verification/SKILL.md' },
   { name: 'incr', kind: 'vendor', source: 'https://github.com/dowdiness/incr', vendorPath: 'vendor/dowdiness/incr', sourceSkillPath: 'vendor/dowdiness/incr/skills/incr/SKILL.md', outputPath: 'skills/incr/SKILL.md', notes: 'User-owned library skill copied from the local incr project context.' },
   { name: 'loom', kind: 'vendor', source: 'https://github.com/dowdiness/loom', vendorPath: 'vendor/dowdiness/loom', sourceSkillPath: 'vendor/dowdiness/loom/skills/loom/SKILL.md', outputPath: 'skills/loom/SKILL.md', notes: 'User-owned library skill copied from the local loom project context.' },
-  { name: 'handoff', kind: 'manual', source: '~/.agents/skills/handoff' },
-  { name: 'orchestrate', kind: 'manual', source: '~/.agents/skills/orchestrate', notes: 'Cross-repo and multiagent session setup with delegation checkpoints and structured worker-output intake.' },
-  { name: 'tuple-wrapper-api-style', kind: 'manual', source: '~/.agents/skills/tuple-wrapper-api-style' },
+  { name: 'handoff', kind: 'manual', source: 'in-tree' },
+  { name: 'orchestrate', kind: 'manual', source: 'in-tree', notes: 'Cross-repo and multiagent session setup with delegation checkpoints and structured worker-output intake.' },
+  { name: 'tuple-wrapper-api-style', kind: 'manual', source: 'in-tree' },
 ]
 
 export const deferredLocalSkills = [

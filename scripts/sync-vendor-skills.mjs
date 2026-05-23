@@ -1,4 +1,17 @@
-import { diffDirs, outputDir, rel, sourceDir, syncSkill, vendorSkills } from './vendor-skills.mjs'
+import {
+  diffDirs,
+  gitSha,
+  outputDir,
+  recordedSha,
+  rel,
+  sourceDir,
+  syncSkill,
+  vendorSkills,
+} from './vendor-skills.mjs'
+
+function short(sha) {
+  return sha === 'unknown' ? '?' : sha.slice(0, 7)
+}
 
 const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
@@ -16,9 +29,16 @@ if (unknown.length > 0) {
 
 for (const skill of selected) {
   if (dryRun) {
-    const diffs = await diffDirs(sourceDir(skill), outputDir(skill))
+    const [diffs, snapshot, upstream] = await Promise.all([
+      diffDirs(sourceDir(skill), outputDir(skill)),
+      recordedSha(skill),
+      gitSha(skill),
+    ])
     const status = diffs.length === 0 ? 'clean' : `${diffs.length} diff(s)`
-    console.log(`DRY ${skill.name}: ${rel(sourceDir(skill))} -> ${rel(outputDir(skill))} (${status})`)
+    const stale = snapshot !== 'unknown' && upstream !== 'unknown' && snapshot !== upstream ? ' STALE' : ''
+    console.log(
+      `DRY ${skill.name}: ${rel(sourceDir(skill))} -> ${rel(outputDir(skill))} (${status}) [snapshot=${short(snapshot)} upstream=${short(upstream)}${stale}]`,
+    )
     continue
   }
 

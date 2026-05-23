@@ -95,8 +95,22 @@ export async function diffDirs(left, right) {
 
 export async function gitSha(skill) {
   if (!skill.vendorPath) return 'unknown'
-  const { stdout } = await execFileAsync('git', ['-C', abs(skill.vendorPath), 'rev-parse', 'HEAD'])
-  return stdout.trim()
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', abs(skill.vendorPath), 'rev-parse', 'HEAD'])
+    return stdout.trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+export async function recordedSha(skill) {
+  try {
+    const text = await readFile(join(outputDir(skill), 'SYNC.md'), 'utf8')
+    const match = text.match(/\*\*Git SHA:\*\*\s+`([a-f0-9]+)`/)
+    return match?.[1] ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
 }
 
 export function syncMarkdown(skill, sha, date) {

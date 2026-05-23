@@ -85,7 +85,7 @@ If the host agent supports delegated workers or parallel agent tasks, run the wo
      ./parse-worker-output.py --root Changelog        # or ApiReview / DocDrift
      ```
      The script lives next to this SKILL.md, uses uv-managed Python 3.13 + `baml-lib`, and handles preamble, code-fence wrapping, and trailing commentary structurally (not by regex). Auto-installs deps on first run.
-     Regression tests: see `tests/run-tests.sh` (27 fixtures covering happy path, real-world prose leaks, edge cases, CLI surface, stress, concurrency, and Codex review findings).
+     Regression tests: see `tests/run-tests.nu` (27 fixtures covering happy path, real-world prose leaks, edge cases, CLI surface, stress, concurrency, and Codex review findings).
    - **Inline regex fallback** (if the script is unavailable): locate the first `{`, locate the matching closing `}` (balanced-brace count), discard everything outside. Strip ```json / ``` fences if present at the boundaries.
 3. **Re-request on hard failure.** If both fail, ask the worker to re-output JSON-only — do not silently accept the prose-wrapped output.
 

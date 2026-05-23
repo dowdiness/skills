@@ -13,8 +13,8 @@ Use `meta.ts` as the source-of-truth catalog for ownership and sync source. Use 
 ```bash
 rtk npm run validate
 rtk npm run list
-rtk ./scripts/install.sh
-rtk ./scripts/uninstall.sh
+rtk ./scripts/install.nu
+rtk ./scripts/uninstall.nu
 rtk npm run install-local
 rtk npm run uninstall-local
 rtk git submodule update --init --recursive

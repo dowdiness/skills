@@ -2,11 +2,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "install-local": "bash scripts/install.sh",
+    "install-local": "nu scripts/install.nu",
     "list": "node scripts/list.mjs",
     "sync-status": "node scripts/sync-vendor-skills.mjs --dry-run",
     "sync-vendor": "node scripts/sync-vendor-skills.mjs",
-    "uninstall-local": "bash scripts/uninstall.sh",
+    "uninstall-local": "nu scripts/uninstall.nu",
     "validate": "node scripts/validate.mjs"
   }
 }

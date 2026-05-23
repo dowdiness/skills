@@ -12,25 +12,60 @@ When published on GitHub, install selected skills with the Agent Skills CLI:
 pnpx skills add dowdiness/skills --skill='*'
 ```
 
-For local development on this machine:
+### Prerequisites
+
+The local install, uninstall, and cleanup scripts are written in [Nushell](https://www.nushell.sh/) (≥ 0.100). Install it with one of:
+
+```bash
+brew install nushell                # macOS / Linuxbrew
+cargo install nu                    # any platform with Rust toolchain
+winget install nushell.nushell      # Windows
+```
+
+See [nushell.sh/book/installation.html](https://www.nushell.sh/book/installation.html) for the full installer matrix.
+
+#### moonbit-housekeeping: BAML / uv
+
+The `moonbit-housekeeping` skill ships `parse-worker-output.py`, a JSON validator powered by [BAML](https://www.boundaryml.com/) (`baml-lib`). The script declares its dependencies inline via [PEP 723](https://peps.python.org/pep-0723/) and runs through [uv](https://docs.astral.sh/uv/), which fetches Python 3.13 + `baml-lib` on first invocation.
+
+You only need `uv`. Install it with one of:
+
+```bash
+brew install uv                                                    # macOS / Linuxbrew
+curl -LsSf https://astral.sh/uv/install.sh | sh                    # macOS / Linux installer script
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
+```
+
+First run takes a few seconds while uv downloads the Python toolchain and `baml-lib`; subsequent runs hit the local cache. No manual `pip install` needed.
+
+Smoke test against a bundled fixture:
+
+```bash
+skills/moonbit-housekeeping/parse-worker-output.py \
+  --root Changelog --input skills/moonbit-housekeeping/tests/a1-changelog-clean.txt
+```
+
+Regression tests for the parser live at `skills/moonbit-housekeeping/tests/run-tests.nu`.
+
+### Local install
 
 ```bash
 git clone --recursive https://github.com/dowdiness/skills.git
 cd skills
-./scripts/install.sh
+./scripts/install.nu
 ```
 
 If duplicates still exist from previous sessions, run the repair pass first:
 
 ```bash
-./scripts/install.sh --repair
+./scripts/install.nu --repair
 ```
 
 This backs up conflicting paths to:
 
 `$HOME/.local/share/dowdiness-skills-backup/<timestamp>`
 
-Then rerun `./scripts/install.sh` for strict mode.
+Then rerun `./scripts/install.nu` for strict mode.
 
 This symlinks every directory in `skills/` into:
 
@@ -43,7 +78,7 @@ This symlinks every directory in `skills/` into:
 Remove only symlinks that point back to this repository:
 
 ```bash
-./scripts/uninstall.sh
+./scripts/uninstall.nu
 ```
 
 ## Repair duplicate skills safely
@@ -51,31 +86,31 @@ Remove only symlinks that point back to this repository:
 If you encounter duplicate or leftover skill paths in agent directories, use the cleanup script in dry-run mode first:
 
 ```bash
-./scripts/cleanup-duplicate-skills.sh
+./scripts/cleanup-duplicate-skills.nu
 ```
 
 If the listed entries are expected duplicates, apply the move to backup:
 
 ```bash
-./scripts/cleanup-duplicate-skills.sh --apply
+./scripts/cleanup-duplicate-skills.nu --apply
 ```
 
 Then re-run local installation:
 
 ```bash
-./scripts/install.sh
+./scripts/install.nu
 ```
 
 To rollback from a previous backup directory, use:
 
 ```bash
-./scripts/cleanup-duplicate-skills.sh --restore <backup-dir>
+./scripts/cleanup-duplicate-skills.nu --restore <backup-dir>
 ```
 
 To verify duplicate state without moving files, use:
 
 ```bash
-./scripts/cleanup-duplicate-skills.sh --check
+./scripts/cleanup-duplicate-skills.nu --check
 ```
 
 The cleanup script is conservative:
@@ -104,7 +139,7 @@ npm run uninstall-local
 | `moonbit-deprecated-syntax` | vendor | Tracks deprecated MoonBit syntax and replacement patterns. |
 | `moonbit-error-handling` | vendor | Error type, abort/fail/raise, and recovery boundary guidance. |
 | `moonbit-expression-problem` | vendor | Finally Tagless and two-layer extensibility patterns in MoonBit. |
-| `moonbit-housekeeping` | vendor | Repo maintenance workflow with BAML-backed worker output parsing. |
+| `moonbit-housekeeping` | manual | Repo maintenance workflow with BAML-backed worker output parsing. |
 | `moonbit-opaque-types` | vendor | Opaque/newtype public API design patterns. |
 | `moonbit-perf-investigation` | vendor | Measurement-first performance investigation workflow. |
 | `moonbit-refactoring-safety` | vendor | Safety discipline for boundary-crossing MoonBit refactors. |
@@ -150,7 +185,6 @@ The installable skill output remains under `skills/`. Update the source reposito
 - `vendor/dowdiness/moonbit-skills/moonbit-deprecated-syntax/SKILL.md` -> `skills/moonbit-deprecated-syntax/SKILL.md`
 - `vendor/dowdiness/moonbit-skills/moonbit-error-handling/SKILL.md` -> `skills/moonbit-error-handling/SKILL.md`
 - `vendor/dowdiness/moonbit-skills/moonbit-expression-problem/SKILL.md` -> `skills/moonbit-expression-problem/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-housekeeping/SKILL.md` -> `skills/moonbit-housekeeping/SKILL.md`
 - `vendor/dowdiness/moonbit-skills/moonbit-opaque-types/SKILL.md` -> `skills/moonbit-opaque-types/SKILL.md`
 - `vendor/dowdiness/moonbit-skills/moonbit-perf-investigation/SKILL.md` -> `skills/moonbit-perf-investigation/SKILL.md`
 - `vendor/dowdiness/moonbit-skills/moonbit-refactoring-safety/SKILL.md` -> `skills/moonbit-refactoring-safety/SKILL.md`

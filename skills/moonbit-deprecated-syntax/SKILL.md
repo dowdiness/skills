@@ -20,6 +20,7 @@ Reference this skill before writing MoonBit code. Using deprecated syntax causes
 | `map.size()` | `map.length()` | Use `.length()` for all collections |
 | `opt.or(default)` | `opt.unwrap_or(default)` | `.or()` deprecated |
 | `text.substring(start=i, end=j)` | `text[i:j].to_string()` | Slice syntax preferred |
+| `try? expr` | `try <expr> catch { e => ... } noraise { _ => ... }` | `try?` is deprecated; migrate to explicit catch/noraise around the raising expression |
 | `pub typealias X = Y` | `pub type X = Y` | `typealias` keyword removed |
 | `let UPPER_CASE` at module level | `let lower_case` | Uppercase requires `const`, not `let` |
 | `not(expr)` | `!expr` | Use prefix `!` operator |
@@ -33,6 +34,41 @@ Reference this skill before writing MoonBit code. Using deprecated syntax causes
 | Dual-signature struct constructor | `fn Type::Type(params) -> Type { .. }` | The verbose two-declaration form is deprecated in v0.9.2 — define the constructor directly as one method |
 | `Show::to_string` on Option / Result / Array / Map / Set / tuple | `Debug::to_string` (via `derive(Debug)`) + `@debug.assert_eq` | Container `Show` impls being phased out per v0.9.2 release notes. Verified deprecation observed on `Option` in `moonc` 0.1.20260427; broader container deprecations may not have shipped yet — check `moon check` output. `Show::output` is now consistent with `Show::to_string` (both unquoted) for `String`/`Char` |
 | `options("pre-build": ...)` in moon.pkg | `rule()` / `dev_build()` in `moon.mod` | v0.9.2 build rules: structured `rule()` / `dev_build()` declarations are reusable across packages |
+
+## try? migration examples
+
+### Map `try?` to `Result`-style handling
+
+```moonbit
+// DEPRECATED
+// let result : Result[Unit, Error] = try? rt.batch(fn() raise {
+//   // ...
+// })
+
+// REPLACEMENT (result-preserving)
+let run = fn() raise {
+  rt.batch(fn() raise {
+    // ...
+  })
+}
+let result : Result[Unit, Error] = try run() catch {
+  e => Err(e)
+} noraise {
+  _ => Ok(())
+}
+```
+
+```moonbit
+// REPLACEMENT (local assertion)
+let mut failed = false
+try
+  do_something_that_may_raise()
+catch {
+  _ => failed = true
+} noraise {
+  _ => ()
+}
+```
 
 ## API patterns
 

@@ -2,20 +2,35 @@
 name: moonbit-traits
 description: >
   Reference guide for effective trait usage in MoonBit's Self-based
-  trait system (no type parameters, no associated types). Use when
+  trait system (no trait type parameters, no associated types, but
+  polymorphic trait methods are supported in v0.10+). Use when
   writing MoonBit traits, designing APIs with traits, or when the user
   asks about trait patterns like endomorphisms, capability traits,
-  callback-based iteration, trait multiplication, newtypes, visitor
-  pattern, or defunctionalized associated types in MoonBit.
+  polymorphic methods, callback-based iteration, trait multiplication,
+  newtypes, visitor pattern, or defunctionalized associated types in MoonBit.
 ---
 
 # Effective trait usage patterns in MoonBit
 
 ## Introduction
 
-MoonBit's trait system uses a **Self-type based** design: unlike Haskell's type classes (`class Eq a where ...`), MoonBit traits do not take explicit type parameters. The implementing type is implicitly available as `Self`. This design is shared with Rust and Swift, but MoonBit's traits are further constrained by the absence of associated types.
+MoonBit's trait system uses a **Self-type based** design: unlike Haskell's type classes (`class Eq a where ...`), MoonBit traits do not take explicit trait-level type parameters. The implementing type is implicitly available as `Self`. MoonBit traits still have no associated types, but since MoonBit v0.10, individual trait methods may have their own type parameters.
 
 This document explores how to write effective, idiomatic traits under these constraints, organized from the most natural patterns to increasingly creative workarounds.
+
+## Current syntax baseline
+
+In MoonBit v0.10+, trait and impl entries use the `fn` keyword:
+
+```moonbit
+trait I {
+  fn f(Self) -> Unit
+}
+
+impl I for Int with fn f(_) {}
+```
+
+Old examples without `fn` may still appear in legacy code, but new guidance should use the `fn` form.
 
 ## Understanding the constraints
 
@@ -23,13 +38,68 @@ A MoonBit trait can reference:
 
 - **`Self`** — the implementing type (implicit)
 - **Concrete types** — `Int`, `String`, `Bool`, user-defined structs/enums, etc.
+- **Method-local type parameters** — declared on an individual method, such as `fn[X] f(Self, X) -> Unit` or `fn[X : Show] write(Self, X) -> Unit`
 
 A MoonBit trait *cannot* reference:
 
 - Type parameters on the trait itself (no `trait Convert[T]`)
 - Associated types (no `type Item` inside a trait)
+- Implementation-chosen hidden types in method signatures
 
-This means every type that appears in a trait method signature, other than `Self`, must be a specific, known type.
+Method type parameters are **caller-chosen and universal**: an implementation of `fn[X] f(Self, X)` must work for every `X` allowed by the bounds. They do not mean “each implementation chooses one `X`”. If the implementation must fix one type (for example one `State`, one `Event`, and one `Action`), use a generic struct/function record or a defunctionalized wrapper instead of a polymorphic trait method.
+
+## Polymorphic trait methods
+
+Polymorphic trait methods are useful when one method should accept or compute over a type chosen separately at each call site, and the implementation can handle all such types uniformly.
+
+```moonbit
+trait Logger {
+  fn[X : Show] write_object(Self, X) -> Unit
+}
+
+impl Logger for StringBuilder with fn write_object(self, x) {
+  self.write_string(x.to_string())
+}
+```
+
+When implementing a polymorphic trait method, the method's own type parameters usually do not need to be annotated explicitly. If you do annotate them, put method type parameters after `fn`; impl type parameters still go after `impl`:
+
+```moonbit
+trait Poly {
+  fn[X] f(Self, X) -> Unit
+}
+
+impl[A] Poly for Array[A] with fn[X] f(self, x : X) {
+  ignore(self)
+  ignore(x)
+}
+```
+
+### Good uses
+
+- Generic sinks/loggers/builders: `fn[X : Show] write(Self, X) -> Unit`
+- Folds where the element type is fixed but the accumulator/result is caller-chosen: `fn[R] fold(Self, init : R, f : (R, Int) -> R) -> R`
+- Adapters parameterized by a callback, factory, or serializer supplied by the caller
+
+### Bad uses
+
+Do not use method type parameters to fake associated types:
+
+```moonbit
+// Usually wrong: this says every implementation can update every S/E/A.
+trait AppLike {
+  fn[S, E, A] update(Self, S, E) -> (S, Array[A])
+}
+```
+
+For an embedded app whose implementation fixes `State`, `Event`, and `Action`, prefer a generic record or wrapper:
+
+```moonbit
+struct App[S, E, A] {
+  init : () -> S
+  update : (S, E) -> (S, Array[A])
+}
+```
 
 ## Pattern 1: self-closed algebras (endomorphisms)
 
@@ -37,16 +107,16 @@ The most natural pattern. All inputs and outputs are `Self`.
 
 ```moonbit
 trait Monoid {
-  empty() -> Self
-  combine(Self, Self) -> Self
+  fn empty() -> Self
+  fn combine(Self, Self) -> Self
 }
 
 trait Ord {
-  compare(Self, Self) -> Ordering
+  fn compare(Self, Self) -> Ordering
 }
 
 trait Semigroup {
-  append(Self, Self) -> Self
+  fn append(Self, Self) -> Self
 }
 ```
 
@@ -58,9 +128,9 @@ Fluent builders are a natural application of `Self -> Self` chains:
 
 ```moonbit
 trait Builder {
-  with_name(Self, String) -> Self
-  with_size(Self, Int) -> Self
-  build(Self) -> Result
+  fn with_name(Self, String) -> Self
+  fn with_size(Self, Int) -> Self
+  fn build(Self) -> Result
 }
 ```
 
@@ -79,27 +149,27 @@ When a trait needs to produce or consume a value of a type other than `Self`, fi
 
 ```moonbit
 trait Show {
-  to_string(Self) -> String
+  fn to_string(Self) -> String
 }
 
 trait Hash {
-  hash(Self) -> Int
+  fn hash(Self) -> Int
 }
 
 trait ToJson {
-  to_json(Self) -> JsonValue
+  fn to_json(Self) -> JsonValue
 }
 
 trait ToBytes {
-  to_bytes(Self) -> Bytes
+  fn to_bytes(Self) -> Bytes
 }
 
 trait Measure {
-  size(Self) -> Int
+  fn size(Self) -> Int
 }
 ```
 
-The key insight: if you would write `trait Show[T] { show(Self) -> T }` and then *always* instantiate `T = String`, the type parameter adds no value. A fixed projection is simpler.
+The key insight: if you would write `trait Show[T] { fn show(Self) -> T }` and then *always* instantiate `T = String`, the type parameter adds no value. A fixed projection is simpler.
 
 ### Choosing the right target type
 
@@ -122,26 +192,27 @@ Keep traits small — ideally one or two methods — representing a single capab
 
 ```moonbit
 // Good: fine-grained capabilities
-trait Readable  { read(Self, Bytes) -> Int }
-trait Writable  { write(Self, Bytes) -> Int }
-trait Closable  { close(Self) -> Unit }
-trait Flushable { flush(Self) -> Unit }
+trait Readable  { fn read(Self, Bytes) -> Int }
+trait Writable  { fn write(Self, Bytes) -> Int }
+trait Closable  { fn close(Self) -> Unit }
+trait Flushable { fn flush(Self) -> Unit }
 
 // Bad: monolithic interface
 trait Stream {
-  read(Self, Bytes) -> Int
-  write(Self, Bytes) -> Int
-  close(Self) -> Unit
-  flush(Self) -> Unit
-  seek(Self, Int) -> Int
+  fn read(Self, Bytes) -> Int
+  fn write(Self, Bytes) -> Int
+  fn close(Self) -> Unit
+  fn flush(Self) -> Unit
+  fn seek(Self, Int) -> Int
 }
 ```
 
 Fine-grained traits are essential under this constraint set because:
 
-1. **No type parameters** means you cannot parameterize behavior — so each trait must represent one coherent capability
-2. **Composition via multiple trait bounds** (`T : Readable + Closable`) replaces what would otherwise require generic traits
-3. **Implementors** only pay for what they provide
+1. **No trait-level type parameters** means you cannot parameterize the whole trait — so each trait should represent one coherent capability
+2. **Method-local polymorphism** is available only when a single method can be implemented uniformly for every admissible method type parameter
+3. **Composition via multiple trait bounds** (`T : Readable + Closable`) replaces what would otherwise require generic traits
+4. **Implementors** only pay for what they provide
 
 ### When to use
 
@@ -150,16 +221,53 @@ Fine-grained traits are essential under this constraint set because:
 - Permission / access control modeling
 - Any cross-cutting concern
 
-## Pattern 4: callback-based iteration (CPS style)
+## Pattern 4: polymorphic method capabilities
 
-Without associated types, you cannot write a generic `Iterator` trait. The workaround is to push values into callbacks instead of pulling them out.
+Use polymorphic methods when the type parameter belongs to the operation, not to the implementor.
+
+```moonbit
+trait ObjectWriter {
+  fn[X : Show] write_object(Self, X) -> Unit
+}
+
+trait IntFoldable {
+  fn[R] fold_ints(Self, init : R, f : (R, Int) -> R) -> R
+}
+```
+
+`ObjectWriter::write_object` works because the writer can render any `X : Show`. `IntFoldable::fold_ints` works because the collection's element type is fixed (`Int`), while the caller chooses the accumulator/result type `R`.
+
+### When to use
+
+- The method type parameter is naturally chosen by the caller at each call
+- The implementation can handle every type satisfying the bounds
+- The type parameter appears in parameter, callback, accumulator, or adapter position
+
+### When not to use
+
+- The type should be chosen once by each implementation
+- The type parameter appears only as an unconstrained return type
+- You are trying to model an associated type, iterator item type, app state type, parser output type, etc.
+
+## Pattern 5: callback-based iteration (CPS style)
+
+Without associated types, you still cannot write a generic pull-based `Iterator` trait. The workaround is to push values into callbacks instead of pulling them out.
 
 ### Problem
 
 ```moonbit
-// Cannot write this — `Item` would need to be an associated type
+// Cannot write this — `Item` would need to be an associated type.
 trait Iterator {
-  next(Self) -> Item?  // What is `Item`?
+  fn next(Self) -> Item?  // What is `Item`?
+}
+```
+
+A polymorphic method does not fix this:
+
+```moonbit
+// Usually wrong: this says the iterator can produce any X the caller asks for.
+trait IteratorLike {
+  fn[X] next(Self) -> X?
 }
 ```
 
@@ -169,21 +277,33 @@ Fix the element type to something domain-appropriate:
 
 ```moonbit
 trait CharSource {
-  for_each_char(Self, (Char) -> Unit) -> Unit
+  fn for_each_char(Self, (Char) -> Unit) -> Unit
 }
 
 trait EventSource {
-  on_event(Self, (Event) -> Unit) -> Unit
+  fn for_each_event(Self, (Event) -> Unit) -> Unit
 }
 
 trait LineReader {
-  for_each_line(Self, (String) -> Unit) -> Unit
+  fn for_each_line(Self, (String) -> Unit) -> Unit
 }
 ```
 
 You cannot write a single generic `Iterable[T]`, but you can write `CharSource`, `EventSource`, `LineReader` — each serving a specific domain. In practice, this is often sufficient.
 
-### Solution B: universal value type
+### Solution B: polymorphic folds over a fixed element type
+
+Once the element type is concrete, a method-local type parameter can make the accumulator/result type generic:
+
+```moonbit
+trait CharSource {
+  fn[R] fold_chars(Self, init : R, f : (R, Char) -> R) -> R
+}
+```
+
+This is often better than exposing mutation through a callback when callers want to compute a result.
+
+### Solution C: universal value type
 
 If you need a single, cross-domain iterable, route through a sum type:
 
@@ -197,27 +317,27 @@ enum Value {
 }
 
 trait Iterable {
-  for_each(Self, (Value) -> Unit) -> Unit
+  fn for_each(Self, (Value) -> Unit) -> Unit
 }
 ```
 
 This is effectively a fallback to dynamic typing within a statically-typed shell.
 
-### Solution C: fold-style aggregation
+### Solution D: fixed aggregation
 
-Instead of yielding individual elements, fold them into a fixed accumulator type:
+If even a polymorphic fold is too much API surface, expose fixed summaries:
 
 ```moonbit
 trait Summable {
-  sum(Self) -> Int
+  fn sum(Self) -> Int
 }
 
 trait Countable {
-  count(Self) -> Int
+  fn count(Self) -> Int
 }
 
 trait Reducible {
-  reduce(Self, (Int, Int) -> Int, Int) -> Int
+  fn reduce(Self, (Int, Int) -> Int, Int) -> Int
 }
 ```
 
@@ -229,48 +349,59 @@ This pre-applies the operation, sidestepping the need to abstract over element t
 - Any "collection-like" abstraction
 - Logging, metrics, observer patterns
 
-## Pattern 5: trait multiplication (enumerating concrete pairs)
+## Pattern 6: trait multiplication (enumerating concrete pairs)
 
-When you need a multi-parameter relationship like `Convert[T]`, decompose it into one trait per target type.
+When you need a multi-parameter relationship like `Convert[T]`, decompose it into one trait per target type unless a polymorphic method can implement the operation uniformly.
 
 ```moonbit
-// Cannot write: trait Convert[T] { convert(Self) -> T }
+// Cannot write: trait Convert[T] { fn convert(Self) -> T }
 
 // Instead, enumerate the targets:
-trait ToInt    { to_int(Self) -> Int }
-trait ToFloat  { to_float(Self) -> Double }
-trait ToString { to_string(Self) -> String }
-trait ToJson   { to_json(Self) -> JsonValue }
+trait ToInt    { fn to_int(Self) -> Int }
+trait ToFloat  { fn to_float(Self) -> Double }
+trait ToString { fn to_string(Self) -> String }
+trait ToJson   { fn to_json(Self) -> JsonValue }
 ```
+
+Polymorphic methods reduce trait multiplication only for operations like “consume any value satisfying this bound”:
+
+```moonbit
+trait Sink {
+  fn[X : Show] put(Self, X) -> Unit
+}
+```
+
+They do not replace target-specific conversions, because `fn[X] convert(Self) -> X` would require producing any type the caller requests.
 
 ### Managing combinatorial growth
 
 1. **Only define what you need.** In practice, the set of useful conversions is small.
 2. **Group by domain.** A serialization module defines `ToJson`, `ToBytes`, `ToXml`. A numeric module defines `ToInt`, `ToFloat`.
 3. **Prefer a universal representation.** Route through a common intermediate (like `Value` or `JsonValue`) rather than defining N² direct conversions.
+4. **Use polymorphic methods for uniform consumers.** For example, a logger can accept any `X : Show` instead of defining `log_int`, `log_string`, etc.
 
 ### When to use
 
-- Type conversions
+- Type conversions where the target type is fixed by the trait
 - Encoding / decoding to specific formats
-- Any relationship that would be `trait R[A, B]` in a more expressive system
+- Any relationship that would be `trait R[A, B]` in a more expressive system and cannot be made method-polymorphic uniformly
 
-## Pattern 6: newtype wrappers for type-level distinctions
+## Pattern 7: newtype wrappers for type-level distinctions
 
-Without type parameters, you can use newtypes to recover some type-level precision:
+Without trait-level type parameters, you can use newtypes to recover some type-level precision:
 
 ```moonbit
-struct Meters { value: Double }
-struct Seconds { value: Double }
-struct MetersPerSecond { value: Double }
+struct Meters { value : Double }
+struct Seconds { value : Double }
+struct MetersPerSecond { value : Double }
 
 trait HasMagnitude {
-  magnitude(Self) -> Double
+  fn magnitude(Self) -> Double
 }
 
-impl HasMagnitude for Meters with magnitude(self) { self.value }
-impl HasMagnitude for Seconds with magnitude(self) { self.value }
-impl HasMagnitude for MetersPerSecond with magnitude(self) { self.value }
+impl HasMagnitude for Meters with fn magnitude(self) { self.value }
+impl HasMagnitude for Seconds with fn magnitude(self) { self.value }
+impl HasMagnitude for MetersPerSecond with fn magnitude(self) { self.value }
 ```
 
 Each newtype can satisfy the same trait differently, and the type system prevents you from mixing `Meters` and `Seconds` accidentally.
@@ -281,23 +412,23 @@ Each newtype can satisfy the same trait differently, and the type system prevent
 - Tagged identifiers (UserId vs. PostId)
 - Domain-specific wrappers that share behavior but must not be confused
 
-## Pattern 7: visitor / double dispatch
+## Pattern 8: visitor / double dispatch
 
-For operations that need to branch on multiple types without type parameters:
+For operations that need to branch on multiple types without trait-level type parameters:
 
 ```moonbit
 trait Visitor {
-  visit_int(Self, Int) -> Unit
-  visit_str(Self, String) -> Unit
-  visit_list(Self, Array[Value]) -> Unit
+  fn visit_int(Self, Int) -> Unit
+  fn visit_str(Self, String) -> Unit
+  fn visit_list(Self, Array[Value]) -> Unit
 }
 
 trait Visitable {
-  accept(Self, &Visitor) -> Unit
+  fn accept(Self, &Visitor) -> Unit
 }
 ```
 
-Each `visit_*` method takes a concrete type, so no type parameters are needed.
+Each `visit_*` method takes a concrete type, so no trait-level type parameters are needed. If each visit needs a caller-chosen context or result accumulator, make that individual method polymorphic only when every visitor implementation can handle all admissible context/result types.
 
 ### When to use
 
@@ -305,23 +436,32 @@ Each `visit_*` method takes a concrete type, so no type parameters are needed.
 - Serialization of heterogeneous data
 - Any situation where you need double dispatch
 
-## Pattern 8: defunctionalized associated types
+## Pattern 9: defunctionalized associated types
 
 When a trait ideally needs an associated type (a type that varies per implementation), defunctionalize it: each implementation becomes a separate struct that fixes the associated type concretely.
 
 ### Problem
 
 ```moonbit
-// Cannot write — MoonBit has no associated types
+// Cannot write — MoonBit has no associated types.
 trait Pretty {
   type Ann                        // varies per implementation
-  to_layout(Self) -> Layout[Ann]
+  fn to_layout(Self) -> Layout[Ann]
+}
+```
+
+A polymorphic method is not equivalent:
+
+```moonbit
+// Usually wrong: this says every Pretty can produce Layout[A] for every A.
+trait PrettyLike {
+  fn[A] to_layout(Self) -> Layout[A]
 }
 ```
 
 ### Solution
 
-Each "choice" of the associated type becomes a separate struct implementing a shared trait:
+Each "choice" of the associated type becomes a separate struct that fixes the associated type through field types:
 
 ```moonbit
 // A generic container parameterized over the "associated type"
@@ -332,12 +472,12 @@ pub enum Layout[A] {
 }
 
 // Each interpretation fixes A concretely via struct field types
-struct PrettyLayout  { layout: Layout[SyntaxCategory] }  // A = SyntaxCategory
-struct EditorLayout  { layout: Layout[EditorAnn] }       // A = EditorAnn
-struct LspLayout     { layout: Layout[LspAnn] }          // A = LspAnn
+struct PrettyLayout  { layout : Layout[SyntaxCategory] }  // A = SyntaxCategory
+struct EditorLayout  { layout : Layout[EditorAnn] }       // A = EditorAnn
+struct LspLayout     { layout : Layout[LspAnn] }          // A = LspAnn
 ```
 
-All three satisfy the same trait, here called `TermSym`, a Finally Tagless interpreter trait with one method per AST constructor. See the `moonbit-expression-problem` skill for `TermSym` / `replay` in full. `replay(term)` is a function whose return type is resolved by type ascription at the call site, so it works with any of the three wrapper structs:
+All three can satisfy the same Finally Tagless interpreter trait with one method per AST constructor. See the `moonbit-expression-problem` skill for `TermSym` / `replay` in full. `replay(term)` is a function whose return type is resolved by type ascription at the call site, so it works with any of the three wrapper structs:
 
 ```moonbit
 let pretty = (replay(term) : PrettyLayout).layout   // Layout[SyntaxCategory]
@@ -351,7 +491,7 @@ For the most common case, provide a trait with a fixed return type:
 
 ```moonbit
 pub(open) trait Pretty {
-  to_layout(Self) -> Layout[SyntaxCategory]   // default defunctionalization
+  fn to_layout(Self) -> Layout[SyntaxCategory]   // default defunctionalization
 }
 
 // Method syntax for the common case
@@ -365,7 +505,7 @@ term.to_layout()
 
 ### Key insight
 
-The associated type becomes a **field type choice** in each struct. The trait polymorphism (type ascription on `replay`) is the "dispatch" that associated types would handle automatically. This is the same tradeoff as defunctionalization everywhere: you lose the abstraction (can't write code generic over "any annotation type") but gain fully typed variants with no runtime dispatch.
+The associated type becomes a **field type choice** in each struct. Method-local polymorphism does not replace this, because method-local type parameters are caller-chosen while associated types are implementation-chosen. Defunctionalization loses the abstraction of “any annotation type” but gains fully typed variants with no runtime dispatch.
 
 ### When to use
 
@@ -378,11 +518,12 @@ The associated type becomes a **field type choice** in each struct. The trait po
 
 Before designing a trait abstraction, verify the language can express it:
 
-1. **Write the trait signature first.** If the methods have different arity or return types across implementations (e.g., `process(Self, AudioBuffer)` vs `process(Self, AudioBuffer, AudioBuffer)`), a single trait cannot capture both. MoonBit traits have no associated types, no default methods, and no type parameters.
+1. **Write the trait signature first.** If the methods have different arity or return types across implementations (e.g. `process(Self, AudioBuffer)` vs `process(Self, AudioBuffer, AudioBuffer)`), a single trait cannot capture both.
+2. **Identify who chooses each type.** If the caller chooses the type on each call and the implementation can handle all admissible choices, use a polymorphic method. If each implementation chooses one hidden type, MoonBit needs a concrete wrapper/function record/defunctionalization instead.
+3. **Check what is duplicated.** Often the "duplication" is thin forwarding methods (10 lines each), while the real logic is already shared in a backing struct. Extracting capability traits for the shared interface (e.g. `apply_control`) is worthwhile; forcing a trait over structurally different methods is not.
+4. **Prefer capability traits over monolithic unification.** If only some methods can be unified, extract those into a small trait and leave the rest as concrete methods. Partial wins are still wins.
 
-2. **Check what is duplicated.** Often the "duplication" is thin forwarding methods (10 lines each), while the real logic is already shared in a backing struct. Extracting capability traits for the shared interface (e.g., `apply_control`) is worthwhile; forcing a trait over structurally different methods is not.
-
-3. **Prefer capability traits over monolithic unification.** If only some methods can be unified, extract those into a small trait and leave the rest as concrete methods. Partial wins are still wins.
+MoonBit traits have no associated types, no default methods, and no trait-level type parameters. They do have method-local type parameters.
 
 ## Anti-patterns
 
@@ -391,14 +532,14 @@ Before designing a trait abstraction, verify the language can express it:
 ```moonbit
 // Avoid: too many responsibilities, hard to implement partially
 trait DatabaseConnection {
-  query(Self, String) -> Result
-  insert(Self, String, Bytes) -> Bool
-  delete(Self, String, Int) -> Bool
-  begin_transaction(Self) -> Self
-  commit(Self) -> Bool
-  rollback(Self) -> Bool
-  set_timeout(Self, Int) -> Self
-  get_stats(Self) -> String
+  fn query(Self, String) -> Result
+  fn insert(Self, String, Bytes) -> Bool
+  fn delete(Self, String, Int) -> Bool
+  fn begin_transaction(Self) -> Self
+  fn commit(Self) -> Bool
+  fn rollback(Self) -> Bool
+  fn set_timeout(Self, Int) -> Self
+  fn get_stats(Self) -> String
 }
 ```
 
@@ -407,6 +548,24 @@ Split into `Queryable`, `Transactional`, `Configurable`, etc.
 ### Phantom generality
 
 Don't create a trait that *looks* general but can only have one meaningful implementation. Use a struct directly instead.
+
+### Polymorphic method as fake associated type
+
+Do not add `[T]` to a method just because a concrete implementation has a type named `T`. Method type parameters are universal.
+
+```moonbit
+// Wrong for a concrete parser format: it promises every output type.
+trait ParserLike {
+  fn[T] parse(Self, String) -> T
+}
+```
+
+Prefer one of:
+
+- A fixed output trait (`fn parse_json(Self, String) -> JsonValue`)
+- A generic function/record (`Parser[T]` as a struct, not a trait)
+- A callback/factory supplied by the caller
+- A defunctionalized wrapper per output family
 
 ### Forcing a trait where a function suffices
 
@@ -419,17 +578,18 @@ If the operation does not vary by type, it does not need to be a trait.
 | Operations closed over one type | Self-Closed Algebra | `Self -> Self` |
 | Extract a summary/representation | Fixed-Type Projection | `Self -> ConcreteType` |
 | Minimal behavioral contracts | Capability Traits | 1-2 methods per trait |
-| "Iterate over contents" | Callbacks / CPS | Push values to `(T) -> Unit` |
-| Multi-type relationships | Trait Multiplication | One trait per concrete pair |
+| Caller-chosen generic input/accumulator/adapter | Polymorphic Method | `fn[X : Bound] method(Self, X)`; implementation handles all `X` |
+| Iterate over contents | Callbacks / CPS | Push concrete values to `(T) -> Unit` or fold with `fn[R]` |
+| Multi-type relationships with target-specific results | Trait Multiplication | One trait per concrete target |
 | Type-safe wrappers | Newtypes | Distinct structs, shared traits |
 | Branching on multiple types | Visitor | Concrete `visit_*` methods |
 | Trait needs associated type | Defunctionalized Associated Types | Each impl struct fixes `Container[A]` concretely |
 
-The guiding principle is to embrace concrete types. Without type parameters, traits describe relationships between `Self` and specific, known types. Treat that as a design constraint that pushes toward clear, discoverable, domain-grounded interfaces.
+The guiding principle is to distinguish **caller-chosen** method type parameters from **implementation-chosen** associated-type-like choices. Use polymorphic methods only for the former; embrace concrete types, wrappers, and records for the latter.
 
 ## Opaque types (newtype implementation details)
 
-Pattern 6 (Newtypes) gives the concept; this section gives the MoonBit implementation.
+Pattern 7 (Newtypes) gives the concept; this section gives the MoonBit implementation.
 
 ### Basic opaque type
 
@@ -461,7 +621,7 @@ pub fn Pos::value(self : Pos) -> Int { self.value }
 
 ### Patterns by use case
 
-- **Simple wrapper** (validation): `UserId::UserId(id) -> UserId raise UserIdError`, called as `UserId(id)` or `try? UserId(id)`
+- **Simple wrapper** (validation): `UserId::UserId(id) -> UserId raise UserIdError`, called as `UserId(id)`
 - **Opaque wrapper** (hide complex type): `Version::from_frontier(f) -> Version`
 - **Rich API wrapper** exposes semantic methods (`is_insert`, `get_text`) instead of raw access
 - **Escape hatch**: `TextDoc::advanced(self) -> @internal.Document` for power users

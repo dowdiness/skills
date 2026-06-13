@@ -86,6 +86,18 @@ test "isolate: <operation name> at <N> items" (b : @bench.T) {
 - Use realistic data (not trivial 10-item inputs)
 - Use `--release` flag
 - Fresh state per iteration if the operation mutates
+- Vary the operands across iterations — repeating ONE hot operand lets the JIT
+  cache it and warm the branch predictor, deflating per-op cost for pointer-
+  chasing / equality / tree-walk ops. (Observed: a same-pair `CstNode==` loop
+  read 65 ns; the realistic all-distinct-pairs sweep read 3422 ns/def — 50× off,
+  and the deflated number nearly led to the wrong root-cause.)
+- If the bench is a *comparison* against a baseline model (e.g. incr-skip vs a
+  dirty-cell rebuild), enumerate the scenario matrix — which input changes, what
+  each side does per scenario — and give every cell an apples-to-apples
+  head-to-head *before* running. An asymmetric baseline (one side early-exits its
+  diff while the other full-walks) silently inflates or deflates the measured
+  win. (#189: the dirty-cell read scenario needed an early-exit variant to match
+  incr's changed-output rebuild.)
 
 ## Step 5: decision gate
 

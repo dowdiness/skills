@@ -3,10 +3,10 @@ name: moonbit-expression-problem
 description: >
   Guide to solving the Expression Problem in MoonBit using Finally
   Tagless encoding, two-layer architecture (tagless + concrete AST),
-  and related patterns. Use when designing extensible data types,
-  adding new variants or operations to existing code, working with
-  Finally Tagless, Object Algebras, open recursion, or discussing
-  extensibility trade-offs in MoonBit.
+  polymorphic trait methods, and related patterns. Use when designing
+  extensible data types, adding new variants or operations to existing
+  code, working with Finally Tagless, Object Algebras, open recursion,
+  or discussing extensibility trade-offs in MoonBit.
 ---
 
 # Solving the expression problem in MoonBit
@@ -27,7 +27,46 @@ Most languages make one axis easy and the other hard:
 | Algebraic data types + pattern matching | Hard (must edit enum) | Easy (add a new function) |
 | OOP classes + virtual methods | Easy (add a new subclass) | Hard (must edit base class) |
 
-MoonBit, with its Self-based traits (no type parameters, no associated types), has a specific set of tools available. This document surveys the solution space, from the most effective approach to partial workarounds.
+MoonBit, with its Self-based traits (no trait-level type parameters, no associated types, but method-local polymorphic trait methods in v0.10+), has a specific set of tools available. This document surveys the solution space, from the most effective approach to partial workarounds.
+
+## Current trait syntax and polymorphic methods
+
+MoonBit v0.10 requires the `fn` keyword on trait methods and impl entries:
+
+```moonbit
+trait I {
+  fn f(Self) -> Unit
+}
+
+impl I for Int with fn f(_) {}
+```
+
+Trait methods may now have their own type parameters:
+
+```moonbit
+trait ObjectWriter {
+  fn[X : Show] write_object(Self, X) -> Unit
+}
+
+impl ObjectWriter for StringBuilder with fn write_object(self, x) {
+  self.write_string(x.to_string())
+}
+```
+
+This is **method-local universal polymorphism**: the caller chooses `X` on each call, and the implementation must work for every `X` satisfying the bounds. If you write the method type parameters explicitly in an impl, they go after `fn`; impl type parameters still go after `impl`:
+
+```moonbit
+trait Poly {
+  fn[X] f(Self, X) -> Unit
+}
+
+impl[A] Poly for Array[A] with fn[X] f(self, x : X) {
+  ignore(self)
+  ignore(x)
+}
+```
+
+Polymorphic trait methods are useful inside expression-problem designs when the generic type is chosen by the **caller** and handled uniformly by every implementation. They do **not** provide trait-level type parameters, associated types, existential expression values, or implementation-chosen output types. In particular, `fn[A] parse(Self, String) -> A` would promise that one parser can produce any type the caller asks for; it is not a substitute for `type Output`.
 
 ## Solution 1: Finally Tagless (primary recommendation)
 
@@ -41,9 +80,9 @@ Traits in this pattern are named with the `Sym` suffix — `ExprSym`, `TermSym`,
 
 ```moonbit
 trait ExprSym {
-  lit(Int) -> Self
-  add(Self, Self) -> Self
-  neg(Self) -> Self
+  fn lit(Int) -> Self
+  fn add(Self, Self) -> Self
+  fn neg(Self) -> Self
 }
 ```
 
@@ -53,18 +92,18 @@ An "expression" is not a data structure; it is a polymorphic function that works
 // Interpretation 1: Evaluation
 struct Eval { value: Int }
 
-impl ExprSym for Eval with lit(n) { { value: n } }
-impl ExprSym for Eval with add(a, b) { { value: a.value + b.value } }
-impl ExprSym for Eval with neg(a) { { value: -a.value } }
+impl ExprSym for Eval with fn lit(n) { { value: n } }
+impl ExprSym for Eval with fn add(a, b) { { value: a.value + b.value } }
+impl ExprSym for Eval with fn neg(a) { { value: -a.value } }
 
 // Interpretation 2: Pretty-printing
 struct Show { repr: String }
 
-impl ExprSym for Show with lit(n) { { repr: n.to_string() } }
-impl ExprSym for Show with add(a, b) {
+impl ExprSym for Show with fn lit(n) { { repr: n.to_string() } }
+impl ExprSym for Show with fn add(a, b) {
   { repr: "(\{a.repr} + \{b.repr})" }
 }
-impl ExprSym for Show with neg(a) {
+impl ExprSym for Show with fn neg(a) {
   { repr: "(-\{a.repr})" }
 }
 ```
@@ -72,7 +111,7 @@ impl ExprSym for Show with neg(a) {
 Expressions are written as generic functions:
 
 ```moonbit
-fn example1[T : ExprSym]() -> T {
+fn[T : ExprSym] example1() -> T {
   T::add(T::lit(1), T::neg(T::lit(2)))
 }
 ```
@@ -83,11 +122,11 @@ To add a new syntactic form (e.g., multiplication), define a **new trait** — n
 
 ```moonbit
 trait MulSym {
-  mul(Self, Self) -> Self
+  fn mul(Self, Self) -> Self
 }
 
-impl MulSym for Eval with mul(a, b) { { value: a.value * b.value } }
-impl MulSym for Show with mul(a, b) {
+impl MulSym for Eval with fn mul(a, b) { { value: a.value * b.value } }
+impl MulSym for Show with fn mul(a, b) {
   { repr: "(\{a.repr} * \{b.repr})" }
 }
 ```
@@ -95,7 +134,7 @@ impl MulSym for Show with mul(a, b) {
 New expressions can use both traits:
 
 ```moonbit
-fn example2[T : ExprSym + MulSym]() -> T {
+fn[T : ExprSym + MulSym] example2() -> T {
   T::mul(T::add(T::lit(2), T::lit(3)), T::lit(4))
 }
 ```
@@ -107,15 +146,15 @@ To add a new operation (e.g., computing expression depth), define a **new struct
 ```moonbit
 struct Depth { depth: Int }
 
-impl ExprSym for Depth with lit(_n) { { depth: 0 } }
-impl ExprSym for Depth with add(a, b) {
+impl ExprSym for Depth with fn lit(_n) { { depth: 0 } }
+impl ExprSym for Depth with fn add(a, b) {
   { depth: 1 + @math.maximum(a.depth, b.depth) }
 }
-impl ExprSym for Depth with neg(a) {
+impl ExprSym for Depth with fn neg(a) {
   { depth: 1 + a.depth }
 }
 
-impl MulSym for Depth with mul(a, b) {
+impl MulSym for Depth with fn mul(a, b) {
   { depth: 1 + @math.maximum(a.depth, b.depth) }
 }
 ```
@@ -142,16 +181,16 @@ struct EvalAndShow {
   show: Show
 }
 
-impl ExprSym for EvalAndShow with lit(n) {
+impl ExprSym for EvalAndShow with fn lit(n) {
   { eval: ExprSym::lit(n), show: ExprSym::lit(n) }
 }
-impl ExprSym for EvalAndShow with add(a, b) {
+impl ExprSym for EvalAndShow with fn add(a, b) {
   {
     eval: ExprSym::add(a.eval, b.eval),
     show: ExprSym::add(a.show, b.show),
   }
 }
-impl ExprSym for EvalAndShow with neg(a) {
+impl ExprSym for EvalAndShow with fn neg(a) {
   {
     eval: ExprSym::neg(a.eval),
     show: ExprSym::neg(a.show),
@@ -167,7 +206,7 @@ This is repetitive but mechanical. With macro support or code generation, it can
 
 ```moonbit
 // IMPOSSIBLE: there is no AST node to match on
-fn optimize[T : ExprSym](e: T) -> T {
+fn[T : ExprSym] optimize(e : T) -> T {
   match e {
     Add(Lit(0), x) => x    // No match — Self is opaque
     _ => e
@@ -176,6 +215,34 @@ fn optimize[T : ExprSym](e: T) -> T {
 ```
 
 **No first-class expression values.** An expression like `example1` is a function `[T : ExprSym]() -> T`, rather than a storable value. You cannot place it in a data structure or pass it to a non-generic function.
+
+### Polymorphic trait methods in tagless DSLs
+
+Method-local type parameters can make a tagless DSL more compact when a syntactic constructor is genuinely generic and all interpretations can handle it uniformly. For example, a pretty-printing-only DSL can accept any displayable literal:
+
+```moonbit
+trait PrettyLiteralSym {
+  fn[X : Show] lit(X) -> Self
+}
+
+struct Pretty { repr : String }
+
+impl PrettyLiteralSym for Pretty with fn lit(x) {
+  { repr: x.to_string() }
+}
+```
+
+But the same constructor is not appropriate for an evaluator that only knows how to evaluate integers. If an interpretation needs type-specific semantics, keep separate concrete constructors/traits (`int_lit`, `string_lit`, etc.) or introduce a closed sum type for literal values.
+
+Polymorphic trait methods also help with caller-chosen continuations or accumulators:
+
+```moonbit
+trait ExprConsumer {
+  fn[R] consume(Self, on_lit : (Int) -> R, on_add : (R, R) -> R) -> R
+}
+```
+
+The important rule is: method type parameters are **caller-chosen**. They do not recover structure, produce first-class expression values, or model implementation-chosen associated types.
 
 ## Solution 1b: extensible enums (`extenum`, v0.9.2)
 
@@ -278,12 +345,12 @@ The most practical architecture combines Finally Tagless for extensibility with 
 
 ```moonbit
 trait ExprSym {
-  lit(Int) -> Self
-  add(Self, Self) -> Self
+  fn lit(Int) -> Self
+  fn add(Self, Self) -> Self
 }
 
 trait MulSym {
-  mul(Self, Self) -> Self
+  fn mul(Self, Self) -> Self
 }
 ```
 
@@ -296,9 +363,9 @@ enum ConcreteExpr {
   Mul(ConcreteExpr, ConcreteExpr)
 }
 
-impl ExprSym for ConcreteExpr with lit(n) { Lit(n) }
-impl ExprSym for ConcreteExpr with add(a, b) { Add(a, b) }
-impl MulSym for ConcreteExpr with mul(a, b) { Mul(a, b) }
+impl ExprSym for ConcreteExpr with fn lit(n) { Lit(n) }
+impl ExprSym for ConcreteExpr with fn add(a, b) { Add(a, b) }
+impl MulSym for ConcreteExpr with fn mul(a, b) { Mul(a, b) }
 ```
 
 ### Workflow
@@ -309,7 +376,7 @@ impl MulSym for ConcreteExpr with mul(a, b) { Mul(a, b) }
 4. **Replay** a `ConcreteExpr` back through the tagless API if needed
 
 ```moonbit
-fn replay[T : ExprSym + MulSym](e: ConcreteExpr) -> T {
+fn[T : ExprSym + MulSym] replay(e : ConcreteExpr) -> T {
   match e {
     Lit(n) => T::lit(n)
     Add(a, b) => T::add(replay(a), replay(b))
@@ -391,10 +458,10 @@ struct TaggedEval {
   children_tags: Array[ExprTag]
 }
 
-impl ExprSym for TaggedEval with lit(n) {
+impl ExprSym for TaggedEval with fn lit(n) {
   { tag: TagLit, value: n, children_tags: [] }
 }
-impl ExprSym for TaggedEval with add(a, b) {
+impl ExprSym for TaggedEval with fn add(a, b) {
   {
     tag: TagAdd,
     value: a.value + b.value,
@@ -407,7 +474,7 @@ This recovers *shallow* structural information without storing the full tree. Us
 
 ## Solution 6: defunctionalized associated types (parameterized output)
 
-When a Finally Tagless interpretation needs to produce a **parameterized type** (e.g., `Layout[A]`, `Tree[A]`, `Stream[A]`) where the parameter varies per use case, but MoonBit has no associated types to express this:
+When a Finally Tagless interpretation needs to produce a **parameterized type** (e.g., `Layout[A]`, `Tree[A]`, `Stream[A]`) where the parameter varies per use case, but MoonBit has no associated types to express this. Polymorphic trait methods do not solve this when `A` is implementation-chosen: `fn[A] to_layout(Self) -> Layout[A]` would require every implementation to produce every annotation type the caller asks for.
 
 ### Problem
 
@@ -415,7 +482,7 @@ When a Finally Tagless interpretation needs to produce a **parameterized type** 
 // Cannot write — no associated types
 trait Pretty {
   type Ann                        // what annotation type?
-  to_layout(Self) -> Layout[Ann]  // Layout parameterized by Ann
+  fn to_layout(Self) -> Layout[Ann]  // Layout parameterized by Ann
 }
 ```
 
@@ -433,10 +500,10 @@ struct EditorLayout  { layout: Layout[EditorAnn], prec: Int }
 struct LspLayout     { layout: Layout[LspAnn], prec: Int }
 
 // All implement TermSym — same trait, different output types
-impl TermSym for PrettyLayout with int_lit(n) {
+impl TermSym for PrettyLayout with fn int_lit(n) {
   { layout: annotate(Number, text(n.to_string())), prec: 5 }
 }
-impl TermSym for EditorLayout with int_lit(n) {
+impl TermSym for EditorLayout with fn int_lit(n) {
   { layout: annotate({ cat: Number, node_id: ... }, text(n.to_string())), prec: 5 }
 }
 ```
@@ -454,7 +521,7 @@ The most common parameterization gets a trait for method syntax:
 
 ```moonbit
 pub(open) trait Pretty {
-  to_layout(Self) -> Layout[SyntaxCategory]   // fixes A = SyntaxCategory
+  fn to_layout(Self) -> Layout[SyntaxCategory]   // fixes A = SyntaxCategory
 }
 
 // Common case: method syntax
@@ -489,7 +556,7 @@ A complete solution to the Expression Problem requires the ability to **abstract
 2. **Type constructor polymorphism**: abstracting over `F[_]`
 3. **Extensible variants / row polymorphism**: open sum types
 
-MoonBit's Self-based traits without type parameters provide none of these directly. Finally Tagless succeeds because it cleverly avoids needing them: instead of storing "an expression" as a value, it represents expressions as **parametrically polymorphic construction processes**. As of v0.9.2, `extenum` adds a limited form of extensible variants (#3) — open sum types are now expressible at the language level — but the trade is that pattern matching loses static exhaustiveness against future additions and must default to a wildcard arm.
+MoonBit's Self-based traits still provide none of these directly: v0.10 method-local type parameters give **universal polymorphism on individual methods**, but not trait-level type parameters, associated types, existential values, or higher-kinded/type-constructor polymorphism. Finally Tagless succeeds because it cleverly avoids needing them: instead of storing "an expression" as a value, it represents expressions as **parametrically polymorphic construction processes**. As of v0.9.2, `extenum` adds a limited form of extensible variants (#3) — open sum types are now expressible at the language level — but the trade is that pattern matching loses static exhaustiveness against future additions and must default to a wildcard arm.
 
 The price paid is the inability to observe structure. This is a fundamental trade-off:
 
@@ -518,38 +585,40 @@ Is the set of variants fixed?
       └─ Yes → Defunctionalized Associated Types (Solution 6) + Finally Tagless
 ```
 
+Polymorphic trait methods are a local refinement, not a separate top-level architecture choice: use them inside the chosen architecture only when the method's generic type is caller-chosen and all implementations can handle it uniformly.
+
 ## Complete example: a mini language
 
 ```moonbit
 // ── Syntax traits (extensible) ──
 
 trait ArithSym {
-  lit(Int) -> Self
-  add(Self, Self) -> Self
-  neg(Self) -> Self
+  fn lit(Int) -> Self
+  fn add(Self, Self) -> Self
+  fn neg(Self) -> Self
 }
 
 trait MulSym {
-  mul(Self, Self) -> Self
+  fn mul(Self, Self) -> Self
 }
 
 // ── Interpretation: Evaluate ──
 
 struct Eval { value: Int }
 
-impl ArithSym for Eval with lit(n)      { { value: n } }
-impl ArithSym for Eval with add(a, b)   { { value: a.value + b.value } }
-impl ArithSym for Eval with neg(a)      { { value: -a.value } }
-impl MulSym   for Eval with mul(a, b)   { { value: a.value * b.value } }
+impl ArithSym for Eval with fn lit(n)      { { value: n } }
+impl ArithSym for Eval with fn add(a, b)   { { value: a.value + b.value } }
+impl ArithSym for Eval with fn neg(a)      { { value: -a.value } }
+impl MulSym   for Eval with fn mul(a, b)   { { value: a.value * b.value } }
 
 // ── Interpretation: Pretty-print ──
 
 struct Pretty { repr: String }
 
-impl ArithSym for Pretty with lit(n)     { { repr: n.to_string() } }
-impl ArithSym for Pretty with add(a, b)  { { repr: "(\{a.repr} + \{b.repr})" } }
-impl ArithSym for Pretty with neg(a)     { { repr: "(-\{a.repr})" } }
-impl MulSym   for Pretty with mul(a, b)  { { repr: "(\{a.repr} * \{b.repr})" } }
+impl ArithSym for Pretty with fn lit(n)     { { repr: n.to_string() } }
+impl ArithSym for Pretty with fn add(a, b)  { { repr: "(\{a.repr} + \{b.repr})" } }
+impl ArithSym for Pretty with fn neg(a)     { { repr: "(-\{a.repr})" } }
+impl MulSym   for Pretty with fn mul(a, b)  { { repr: "(\{a.repr} * \{b.repr})" } }
 
 // ── Concrete AST (for structural operations) ──
 
@@ -560,10 +629,10 @@ enum Ast {
   AMul(Ast, Ast)
 }
 
-impl ArithSym for Ast with lit(n)    { ALit(n) }
-impl ArithSym for Ast with add(a, b) { AAdd(a, b) }
-impl ArithSym for Ast with neg(a)    { ANeg(a) }
-impl MulSym   for Ast with mul(a, b) { AMul(a, b) }
+impl ArithSym for Ast with fn lit(n)    { ALit(n) }
+impl ArithSym for Ast with fn add(a, b) { AAdd(a, b) }
+impl ArithSym for Ast with fn neg(a)    { ANeg(a) }
+impl MulSym   for Ast with fn mul(a, b) { AMul(a, b) }
 
 // ── Optimization (on concrete AST) ──
 
@@ -583,7 +652,7 @@ fn optimize(e: Ast) -> Ast {
 
 // ── Replay optimized AST through any interpretation ──
 
-fn replay[T : ArithSym + MulSym](e: Ast) -> T {
+fn[T : ArithSym + MulSym] replay(e : Ast) -> T {
   match e {
     ALit(n) => T::lit(n)
     AAdd(a, b) => T::add(replay(a), replay(b))
@@ -594,7 +663,7 @@ fn replay[T : ArithSym + MulSym](e: Ast) -> T {
 
 // ── Usage ──
 
-fn program[T : ArithSym + MulSym]() -> T {
+fn[T : ArithSym + MulSym] program() -> T {
   // (1 + 0) * (2 + 3)
   T::mul(T::add(T::lit(1), T::lit(0)), T::add(T::lit(2), T::lit(3)))
 }
@@ -605,7 +674,7 @@ fn program[T : ArithSym + MulSym]() -> T {
 
 ## See also
 
-- **`moonbit-traits`** — for trait API design patterns (Self-Closed Algebra, Fixed-Type Projection, Capability Traits, Callbacks/CPS, Trait Multiplication, Newtypes, Visitor). Use when the question is "how do I design a trait API?" rather than "how do I make extensible data + operations?"
+- **`moonbit-traits`** — for trait API design patterns (Self-Closed Algebra, Fixed-Type Projection, Capability Traits, Polymorphic Methods, Callbacks/CPS, Trait Multiplication, Newtypes, Visitor). Use when the question is "how do I design a trait API?" rather than "how do I make extensible data + operations?"
 
 ## References
 

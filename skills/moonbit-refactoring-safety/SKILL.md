@@ -144,6 +144,14 @@ Fix by making necessary functions `pub` in the internal package. `A` can then us
 
 Let step 3 surface the needed `pub` changes. Publishing everything in step 1 hides the inventory of what needs to cross the boundary, usually a smaller set than you would guess.
 
+**Enums and structs add a second error class:** `pub` enum/struct constructors
+are **read-only outside the defining package** (error [4036] "Cannot create
+values of the read-only type"), so construction sites left in the facade break
+even though pattern matches survive. Before widening to `pub(all)`, check where
+construction sites live in the *end state* of the refactor — if they move into
+the new package too, the widening is only needed mid-refactor and should be
+reverted in the final pass (validated: canopy S2, PR #583).
+
 ### Step 4 — Verify `.mbti` stability
 
 Run `moon info` and inspect `git diff A/pkg.generated.mbti`. The interface file is the source of truth for what consumers of `A` see.
@@ -189,6 +197,57 @@ If the goal isn't to *hide* the internals but to *rename* the package so consume
 - **Step 6':** Once all known consumers have migrated, remove the corresponding entries from `A`'s `pub using` block. Eventually the facade may disappear entirely.
 
 This variant loses the language-enforced isolation in exchange for migration flexibility. Use it only when consumers *should* eventually depend on `B` directly.
+
+## Modern loop-expression notes during safety refactors
+
+When adding safety tests or doing small mechanical rewrites as part of a boundary refactor, consider MoonBit's loop-expression forms for loops that naturally compute a value. Treat this grammar as a precision tool, not as the default replacement for every mutable loop: it gives imperative code functional result shape without pretending effects do not exist.
+
+MoonBit `for` loops are expressions, so binding their result is valid and idiomatic:
+
+```mbt
+let total = for x in xs; acc = 0 {
+  continue acc + x
+} nobreak {
+  acc
+}
+```
+
+Good candidates are loops whose primary purpose is the returned value:
+
+- sum/count/fold accumulators
+- `any`/`all` scans, especially with early `break`
+- min/max/peak searches
+- small tuple accumulators where multiple counters move together
+- search-with-default-result patterns
+
+```mbt
+let found = for x in xs {
+  if predicate(x) {
+    break true
+  }
+} nobreak {
+  false
+}
+```
+
+The update clause can use variables introduced by an `is` pattern in the condition clause:
+
+```mbt
+let total = for sum = 0; queue.next() is Some(elem); sum = sum + elem {
+} nobreak {
+  sum
+}
+```
+
+Prefer ordinary imperative loops when the loop is primarily procedural or side-effect-driven:
+
+- filling, copying, or mutating buffers/arrays/maps
+- parser cursor movement or state machines
+- graph/DSP hot loops unless the rewrite is clearly allocation-neutral and simpler
+- loops where the boolean/count is only a side product of many side effects
+- loops that become more verbose through repeated `continue same` / `continue did_find` ceremony
+
+Use loop expressions only when they make the safety check or extraction clearer. Do not broaden a boundary-refactor PR just to restyle unrelated loops; keep loop-expression rewrites local to code already being touched or to tests added as the safety net.
 
 ## Commands quick reference
 

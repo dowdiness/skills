@@ -74,6 +74,8 @@ If the host agent supports delegated workers or parallel agent tasks, run the wo
 
 **Release:** Run three review workers, in parallel when supported: changelog, api-review, doc-drift. Each uses its respective prompt template.
 
+> **Re-run efficiency.** Before re-dispatching on a repeat run, check what changed since the last run: if `CHANGELOG.md` content and `*.mbti` are unchanged (e.g. the new commits are docs/markdown/comment-only), the `changelog` and `api-review` workers have byte-identical input and will return identical results — carry their prior output forward and re-run only the worker whose input actually changed (usually `doc-drift`). Re-running all three against an unchanged release tree is pure waste.
+
 ### Step 4: Render report (coordinator)
 
 **Parse hygiene.** Worker prompts demand JSON-only output, but adherence is imperfect — preamble ("Now I have...", "The .mbti files are already in sync..."), code-fence wrappers (```json), and trailing commentary leak occasionally. Before parsing, apply lenient extraction:
@@ -124,7 +126,7 @@ Run ALL of these in ONE Bash call:
   echo "=== SUBMODULES ===" ; git submodule status ;
   echo "=== UNTRACKED ===" ; git ls-files --others --exclude-standard ;
   echo "=== BRANCH_DATES ===" ; git for-each-ref --sort=committerdate refs/heads/ --format='%(refname:short) %(committerdate:short) %(subject)' ;
-  echo "=== VERSION_TAG_DRIFT ===" ; VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' moon.mod.json 2>/dev/null | head -1) ; if [ -n "$VER" ]; then TAG_SHA=$(git rev-parse "v$VER^{commit}" 2>/dev/null || git rev-parse "$VER^{commit}" 2>/dev/null) ; HEAD_SHA=$(git rev-parse HEAD) ; if [ -z "$TAG_SHA" ]; then echo "version=$VER tag=absent" ; elif [ "$TAG_SHA" = "$HEAD_SHA" ]; then echo "version=$VER tag=aligned" ; else echo "version=$VER tag_commit=${TAG_SHA:0:7} head_commit=${HEAD_SHA:0:7} drift=$(git rev-list --count $TAG_SHA..HEAD)_ahead" ; fi ; fi
+  echo "=== VERSION_TAG_DRIFT ===" ; VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' moon.mod.json 2>/dev/null | head -1) ; [ -z "$VER" ] && VER=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' moon.mod 2>/dev/null | head -1) ; if [ -n "$VER" ]; then TAG_SHA=$(git rev-parse "v$VER^{commit}" 2>/dev/null || git rev-parse "$VER^{commit}" 2>/dev/null) ; HEAD_SHA=$(git rev-parse HEAD) ; if [ -z "$TAG_SHA" ]; then echo "version=$VER tag=absent" ; elif [ "$TAG_SHA" = "$HEAD_SHA" ]; then echo "version=$VER tag=aligned" ; else echo "version=$VER tag_commit=${TAG_SHA:0:7} head_commit=${HEAD_SHA:0:7} drift=$(git rev-list --count $TAG_SHA..HEAD)_ahead" ; fi ; fi
 
 For submodules, note if any are dirty (+prefix) or on detached HEAD.
 For VERSION_TAG_DRIFT: if the output shows `drift=N_ahead`, emit a severity-warning
@@ -256,6 +258,7 @@ WORKFLOW:
    - Branches merged into main → prune candidates
    - Branches with last commit > 30 days ago and no open PR → prune candidates
    - Worktrees referencing non-existent branches → prune candidates
+   - For all merge checks use `origin/main` (run `git fetch` first), NEVER local `main` — a worktree may hold a stale local `main` far behind the remote, which mislabels every comparison. Note that `git merge-base --is-ancestor` and `git branch --merged` report squash-merged branches as *unmerged* (their tip is not an ancestor even though their content shipped); treat "unmerged per ancestry" as "needs review", not "safe to force-delete". Before listing a worktree as a prune candidate, run `git -C <wt> status --short` — never recommend removing a dirty worktree (uncommitted work would be lost).
 
 8. Synthesize top 3 recommended next actions from all evidence (most impactful, unblocked active items).
 

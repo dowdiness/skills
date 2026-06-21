@@ -30,9 +30,8 @@ loom/canopy code): `Memo::new`, `Signal::new`, `HybridMemo::new`,
 `rt.read_reactive`.
 
 Also fires on: `parser.runtime()`, `attach_*`, `bench_test.mbt`,
-`.bench(`, `examples/incr_tea`, `BrowserRenderer`, `Html : Eq`,
-`keyed_node`, `diff_keyed_children` — or any time you are defining a new
-struct that owns reactive cells and exposes a `get`/`dispose` surface.
+`.bench(` — or any time you are defining a new struct that owns reactive cells
+and exposes a `get`/`dispose` surface.
 
 Sister skill: **loom** (parser-side conventions). If the task involves
 calling `Parser::new` or `new_parser`, read that one too.
@@ -63,7 +62,7 @@ low-level memo introspection recipes, or legacy downstream code).
 | `rt.read_hybrid(h)` | `reachable.read()` / `reachable.read_or_abort()` |
 | `rt.read_reactive(r)` | `eager.read()` |
 
-`Runtime`, `Scope`, `Accumulator`, `Effect`, `MemoEvent`, `CycleError`
+`Runtime`, `Scope`, `Accumulator`, `Effect`, `DerivedEvent`, `CycleError`
 are the same name in both worlds. New code should pick one column and
 stay there per cell chain — don't mix `Memo` and `Derived` for the same
 graph unless a compatibility-only API forces that boundary.
@@ -73,9 +72,8 @@ bridge methods to compatibility handles (`Memo::read`, `Memo::get_or_abort`,
 `MemoMap::read`, etc.). The compatibility handles are eventual cleanup/removal
 targets; migrating users to new methods on them would create churn. For ordinary
 migration, move the handle type/constructor to `Derived`, `ReachableDerived`, or
-`DerivedMap`. Use `scripts/migrate-to-target-facades.py` for a dry-run report
-and conservative safe rewrites; it skips files with context-sensitive reads or
-compatibility-only methods that need manual judgment.
+`DerivedMap`. No migration script is currently tracked in this repo; use the
+API tables and `cells/pkg.generated.mbti` when doing manual rewrites.
 
 ## Quick Reference
 
@@ -107,7 +105,7 @@ closure or not?**
 
 - `input.get()` — Inputs are non-fallible; just reads and records the dep.
 - `derived.get_or_abort()` / `reachable.get_or_abort()` — strict read; aborts on cycle.
-- `derived.get()` / `reachable.get()` — graceful read; returns `Result[T, ReadError]`.
+- `derived.get()` / `reachable.get()` — graceful read; returns `Result[T, CycleError]`.
 - `eager.get()` — strict tracked read of an eager/push value. `EagerDerived` has no `Result` or `_or_abort` read channel.
 
 These record the dep on the surrounding tracking frame at zero observer
@@ -117,21 +115,20 @@ cost.
 consumer methods):
 
 - `derived.read_or_abort()` / `reachable.read_or_abort()` — strict; aborts on cycle.
-- `derived.read()` / `reachable.read()` — returns `Result[T, ReadError]`.
+- `derived.read()` / `reachable.read()` — returns `Result[T, CycleError]`.
 - `eager.read()` — reads the current eager/push value outside the graph.
 - Through a long-lived anchor: `watch.read_or_abort()` / `watch.read()`
   (or compat: `observer.get()`).
 - Legacy: `rt.read(memo)` / `rt.read_hybrid(h)` / `rt.read_reactive(r)`
   still work for the compat-named handles.
 
-The target-facade read channel — `Derived` / `ReachableDerived` /
-`DerivedMap` `.get()` / `.read()` / `.read_or_else()` and `Watch::read` —
-returns `Result[T, ReadError]`, where
-`ReadError = Cycle(CycleError) | Disposed(CellId)` distinguishes a
-dependency cycle from a read on a disposed cell (use `.is_cycle()` /
-`.is_disposed()`, or `.format_path()` for a message). The compat
-`get_result` family (`Memo` / `HybridMemo` / `MemoMap` / `Signal`) is
-**unchanged** — it still returns `Result[T, CycleError]`.
+The target-facade result-returning read channel — `Derived` /
+`ReachableDerived` `.get()` / `.read()`, `DerivedMap` `.get(key)` /
+`.read(key)`, and `Watch::read()` — currently returns `Result[..., CycleError]`.
+`DerivedMap::read_or(...)` and `DerivedMap::read_or_else(...)` return the value
+`V` directly after applying their fallback. Disposed cells still abort on strict
+reads. Keep generated code matching on `CycleError` until a broader read-error
+API appears in `cells/pkg.generated.mbti`.
 
 ### Why mixing breaks
 
@@ -191,7 +188,7 @@ Canonical references:
 - `docs/target_api_examples.mbt.md` — checked literate examples of the
   target facade form (`Input`, `Derived`, `Scope`, `Watch`,
   `read_or_abort`, `get_or_abort`).
-- `docs/getting-started.mbt.md` — narrative version with the
+- `docs/getting-started.md` — narrative version with the
   inside-vs-outside rule called out.
 - `tests/bench_test.mbt` — bench template using the compat names; still
   the canonical bench surface.
@@ -211,11 +208,13 @@ subsequent reads abort.
 **Rule:** if you build a downstream chain that should survive
 `Runtime::gc()` (anything stored in a struct field with a public `get`),
 hold a persistent `Watch` (target) or `Observer` (compat) on the
-terminal Derived/Memo and register it with a `Scope`. Prime that terminal
-read before exposing the facade if `Runtime::gc()` can run before the
-first consumer read: an uncomputed watched/observed cell is rooted, but
-has no recorded upstream `gc_dependencies()` yet. If the facade keeps a
-last-good cache, seed it from that priming read.
+terminal Derived/Memo. Target `Watch` values are not registered through `Scope`
+in the current API, so store the `Watch` field and dispose it explicitly;
+compat `Observer` values can be registered with `Scope::add_observer`. Prime the
+terminal read before exposing the facade if `Runtime::gc()` can run before the
+first consumer read: an uncomputed watched/observed cell is rooted, but has no
+recorded upstream `gc_dependencies()` yet. If the facade keeps a last-good cache,
+seed it from that priming read.
 
 GC traversal follows `gc_dependencies()` from anchored roots, so the
 parser's interior cells stay reachable as long as one downstream cell is
@@ -243,9 +242,9 @@ pub fn MyAttachment::attach(
     () => finalize(stage_one.get_or_abort()),
     label="result",
   )
-  // Register the watch with the scope for disposal, then prime it so a
-  // pre-read Runtime::gc() sees the upstream dependencies.
-  let watch = scope.add_watch(result.watch())
+  // Store the watch for explicit disposal, then prime it so a pre-read
+  // Runtime::gc() sees the upstream dependencies.
+  let watch = result.watch()
   ignore(watch.read_or_abort())
   { scope, watch }
 }
@@ -255,7 +254,8 @@ pub fn MyAttachment::get(self : MyAttachment) -> Result {
 }
 
 pub fn MyAttachment::dispose(self : MyAttachment) -> Unit {
-  self.scope.dispose()   // children → watch → owned cells. Idempotent.
+  self.watch.dispose()
+  self.scope.dispose()
 }
 ```
 
@@ -404,36 +404,6 @@ Conventions to match verbatim:
 - **Label derived cells** in attached pipelines (`label="..."`) — labels
   show up in introspection, which is the whole point of having them.
 
-## `examples/incr_tea` Renderer Notes
-
-`examples/incr_tea` is a research/example UI substrate on top of `@incr`, not a
-stable public library API. When touching it:
-
-- Preserve `Html : Eq`: cacheable `Html` values must stay closure-free. Event
-  descriptors are pure data (`on_click(msg)`, `on_input(tag=...)`,
-  `on_keydown(id=KeyEventId(...))`, `on_pointer_down(id=PointerEventId(...))`).
-  DOM payload extraction and message resolution belong at the browser/mount
-  boundary (`BrowserRenderer::mount(..., on_input=..., on_key=..., on_pointer=...)`).
-- Keep keyed responsibilities split: `plan_keyed_diff` is pure and DOM-free;
-  `diff_keyed_children` is the JS DOM applier. The current applier preserves
-  per-key DOM identity but re-appends every keyed survivor on list changes; do
-  not baseline focus loss for moved keyed survivors. The explicit focus-loss
-  baseline is removal of the focused key.
-- Do not optimize keyed diff under a behavior-test task. Issue #241 owns
-  planner/minimal-move work; use the pure benches plus the Playwright DOM bench
-  before changing asymptotics or DOM move strategy.
-- Browser behavior coverage lives in `examples/incr_tea/scripts/test-keyed-dom.mjs`.
-  Run `cd examples/incr_tea && npm run test:dom` after renderer/keyed-DOM
-  changes. It pins row identity, uncontrolled input retention, unchanged-list
-  focus retention, and focus loss when the focused key is removed.
-- Performance evidence for DOM applier changes comes from
-  `cd examples/incr_tea && npm run bench:dom`; tune with
-  `INCR_TEA_DOM_BENCH_ITERATIONS` and `INCR_TEA_DOM_BENCH_SAMPLES`.
-- Update `examples/incr_tea/README.mbt.md` and
-  `docs/research/incr-tea-ui-direction.md` when changing renderer contracts or
-  roadmap status. Keep `docs/performance/2026-06-12-incr-tea-keyed-dom-applier-playwright.md`
-  as the dated baseline unless you are adding a new dated performance snapshot.
-
 ## When You're About to Write New Reactive Code — Checklist
 
 Before any non-trivial `Derived(rt, ...)` / `ReachableDerived` /
@@ -468,7 +438,7 @@ Before any non-trivial `Derived(rt, ...)` / `ReachableDerived` /
 |---------|---------|-----|
 | `rt.read(cell)` or `derived.read_or_abort()` / `reachable.read_or_abort()` inside a compute closure | Bench numbers inflated 25-30% on layered shapes; correctness OK so easy to miss | Replace with `input.get()` / `eager.get()` or `derived.get_or_abort()` / `reachable.get_or_abort()`. Audit the bench file in the same package as the canonical template. |
 | Calling strict graph reads (`.get()` / `.get_or_abort()`) from top-level test or handler | Aborts outside a tracked context, or records a surprising dependency if a compute frame is active | Use `.read_or_abort()` / `.read()` for `Derived` / `ReachableDerived`, `.read()` for `EagerDerived`, or `rt.read(...)` / `rt.read_hybrid(...)` / `rt.read_reactive(...)` for compat handles. |
-| Forgot the GC anchor or priming read on an `attach_*` helper | Tests pass until `rt.gc()` runs before the first read; then `attachment.get()` aborts | Target: store `scope.add_watch(result.watch())` and prime with `watch.read_or_abort()`. Compat: store `scope.add_observer(result.observe())` and prime with `observer.get()`. |
+| Forgot the GC anchor or priming read on an `attach_*` helper | Tests pass until `rt.gc()` runs before the first read; then `attachment.get()` aborts | Target: store `result.watch()`, prime with `watch.read_or_abort()`, and dispose the watch explicitly. Compat: store `scope.add_observer(result.observe())` and prime with `observer.get()`. |
 | Mixed `Memo`/`Derived` for the same chain | Reviewers/Codex flag the inconsistency; types still align because of aliasing so it compiles | Pick one column per chain. |
 | Defined `MyType::new(...)` for a new struct | Inconsistent with project convention; Codex/code review will flag | Rename to `MyType::MyType(...)`. |
 | Wrote `Input::new(...)` / `Derived::new(...)` | Target facade ships direct constructors, not `::new` | Use `Input(rt, v, label=...)` / `Derived(rt, f, label=...)` directly. |
@@ -512,29 +482,15 @@ In this repo (`dowdiness/incr`):
 - `docs/target_api_examples.mbt.md` — checked literate target facade
   examples (`Input`, `Derived`, `Scope`, `Watch`, `read_or_abort`,
   `get_or_abort`). Verified by `moon check` — never out of date.
-- `docs/getting-started.mbt.md` — narrative walk-through with the
-  inside-vs-outside read rule called out (steps 4 and 4.5).
-- `docs/api-reference.mbt.md` — compatibility ↔ target mapping tables for
+- `docs/getting-started.md` — narrative walk-through with the
+  inside-vs-outside read rule called out.
+- `docs/api-reference.md` — compatibility ↔ target mapping tables for
   each handle; authoritative shape of `read` / `read_or_abort` /
   `get` / `get_or_abort` / `watch` / `observe`, plus current guidance to
   migrate old handles directly to target facades rather than adding bridge
   methods to compatibility handles.
-- `scripts/migrate-to-target-facades.py` — dry-run-by-default helper for
-  compatibility-to-facade migrations; reports context-sensitive read sites
-  and skips files with manual findings under `--apply`.
 - `tests/bench_test.mbt` — bench template (currently in compatibility
   names; either column is fine — match what's there).
-- `examples/incr_tea/README.mbt.md` — experimental TEA renderer contract,
-  including closure-free typed payload event descriptors, keyed-child behavior,
-  DOM benchmark, and browser regression-test commands.
-- `docs/research/incr-tea-ui-direction.md` — project direction and roadmap for
-  `examples/incr_tea`; use it to separate behavior baselines from optimization
-  work (#241) and direct-DOM/lazy-boundary research.
-- `examples/incr_tea/scripts/test-keyed-dom.mjs` — Playwright browser baseline
-  for keyed DOM identity, uncontrolled input retention, and focus/focus-loss
-  behavior through the real `diff_keyed_children` path.
-- `docs/performance/2026-06-12-incr-tea-keyed-dom-applier-playwright.md` — dated
-  browser DOM applier benchmark baseline for keyed vs rebuild list operations.
 - `CLAUDE.md` — package map (where each cell type lives), the
   `cells/internal/*` isolation rule, and the target-facade preference
   for new docs/examples.

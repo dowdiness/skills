@@ -19,7 +19,7 @@ def remove-repo-links [target_dir: string, repo_dir: string] {
 
 def main [] {
   let repo_dir = ($env.FILE_PWD | path dirname | path expand)
-  for d in [".agents/skills" ".claude/skills" ".codex/skills"] {
+  for d in [".agents/skills" ".claude/skills" ".codex/skills" ".pi/agent/extensions"] {
     remove-repo-links ($env.HOME | path join $d) $repo_dir
   }
 }

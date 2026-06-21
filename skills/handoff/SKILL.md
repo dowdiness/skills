@@ -41,6 +41,7 @@ Identify:
 - What was committed but not yet merged
 - What was edited but not committed (potential incomplete work — flag for user before memory update)
 - **Work outside this repo** (global skills under `~/.claude/skills/`, `~/.claude/CLAUDE.md`, dotfiles, other repos worked in via `git -C`). The in-repo audit will silently miss these. If you cannot recall the session's actual artifact location, scan the conversation for `Edit`/`Write` tool calls and list each modified path explicitly. Out-of-repo work is invisible to git but is the most common audit-blind-spot for sessions that edit Claude's own configuration.
+- **Whether HEAD is detached** (`git branch --show-current` returning empty). Commits on a detached HEAD are reachable by SHA but have no branch reference — they will be GC'd after `git gc`. Create a named branch (`git checkout -b <name>`) *before* updating memory so commits survive `/clear`. This is distinct from "uncommitted work" but carries the same GC risk. Session moment: 2026-06-14 static-attach design session, two doc commits (`befe643`/`a22d343`) were nearly lost.
 
 **Do not update memory for uncommitted work.** Memory should record committed reality, not in-progress intent. If there's uncommitted code, ask the user before proceeding.
 

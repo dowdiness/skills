@@ -1,6 +1,6 @@
 # Sync Info
 
 - **Source:** `vendor/dowdiness/loom/skills/loom`
-- **Git SHA:** `7d45a66c90363bae0e25b0588fe3520fa2bab2ad`
-- **Synced:** 2026-05-20
+- **Git SHA:** `752416e7013be5125ce9ff7807da43f36bf7978f`
+- **Synced:** 2026-06-21
 

@@ -121,10 +121,14 @@ def main [--repair, --help] {
 
   let repo_dir = ($env.FILE_PWD | path dirname | path expand)
   let skills_root = ($repo_dir | path join "skills")
+  let extensions_root = ($repo_dir | path join "extensions")
   let target_dirs = [
     ($env.HOME | path join ".agents/skills")
     ($env.HOME | path join ".claude/skills")
     ($env.HOME | path join ".codex/skills")
+  ]
+  let extension_target_dirs = [
+    ($env.HOME | path join ".pi/agent/extensions")
   ]
 
   mut conflicts: list<string> = []
@@ -144,6 +148,33 @@ def main [--repair, --help] {
       $backup_dir = $result.backup_dir
       if $result.action == "conflict" {
         $conflicts = ($conflicts | append $result.path)
+      }
+    }
+  }
+
+  if ($extensions_root | path exists) {
+    for target_dir in $extension_target_dirs {
+      mkdir $target_dir
+      let extension_entries = (ls $extensions_root | where name !~ '\.gitkeep$')
+      for entry in $extension_entries {
+        let name = ($entry.name | path basename)
+        let link = ($target_dir | path join $name)
+
+        if $entry.type == "dir" {
+          let index_path = ($entry.name | path join "index.ts")
+          if not ($index_path | path exists) { continue }
+          let result = (link-one $entry.name $link $repair $repo_dir $backup_dir)
+          $backup_dir = $result.backup_dir
+          if $result.action == "conflict" {
+            $conflicts = ($conflicts | append $result.path)
+          }
+        } else if ($entry.name | str ends-with ".ts") {
+          let result = (link-one $entry.name $link $repair $repo_dir $backup_dir)
+          $backup_dir = $result.backup_dir
+          if $result.action == "conflict" {
+            $conflicts = ($conflicts | append $result.path)
+          }
+        }
       }
     }
   }

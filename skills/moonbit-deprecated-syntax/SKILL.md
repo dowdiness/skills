@@ -32,6 +32,7 @@ Reference this skill before writing MoonBit code. Using deprecated syntax causes
 | `type T UnderlyingType` newtype | `struct T(UnderlyingType)` | Old newtype syntax removed in v0.9.2 — use single-field tuple struct |
 | Mutually recursive local `fn` | `letrec` | Mutually recursive local `fn` declarations removed in v0.9.2; use `letrec` for local mutual recursion |
 | Dual-signature struct constructor | `fn Type::Type(params) -> Type { .. }` | The verbose two-declaration form is deprecated in v0.9.2 — define the constructor directly as one method |
+| Struct factory `Type::new(...) -> Type` for construction | custom constructor `fn Type::Type(...) -> Type` and call `Type(...)` | Prefer MoonBit's custom struct constructor syntax for struct values; reserve named factories for non-constructor alternatives like `from_bytes`, `open`, or `load` |
 | `Show::to_string` on Option / Result / Array / Map / Set / tuple | `Debug::to_string` (via `derive(Debug)`) + `@debug.assert_eq` | Container `Show` impls being phased out per v0.9.2 release notes. Verified deprecation observed on `Option` in `moonc` 0.1.20260427; broader container deprecations may not have shipped yet — check `moon check` output. `Show::output` is now consistent with `Show::to_string` (both unquoted) for `String`/`Char` |
 | `options("pre-build": ...)` in moon.pkg | `rule()` / `dev_build()` in `moon.mod` | v0.9.2 build rules: structured `rule()` / `dev_build()` declarations are reusable across packages |
 

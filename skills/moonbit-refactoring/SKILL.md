@@ -65,29 +65,6 @@ When spinning off package `A` into `A` and `B`:
 
 ## Local refactoring
 
-### Rewrite Preferences
-
-Prefer these shapes when behavior stays the same:
-
-- An existing `moonbitlang/core` API over a hand-rolled loop, helper, or
-  container. Search first (`moon ide doc "<keyword>"`); most utilities already
-  exist (`fold`/`map`/`filter`/`collect`, `@buffer.Buffer`, `@cmp.minimum`,
-  `hashmap`/`sorted_map`/`deque`, …). See moonbit-base.md → "Prefer the Core
-  Library" for the need→package map.
-- `match opt { Some(x) => ...; None => ... }` over `if opt.is_some() { ... }`.
-- `guard opt is Some(x) else { ... }` over nested `if`/early-return setup code.
-- `xs.iter().filter(...).map(...).collect()` or a list comprehension over
-  `let mut out = []; for x in xs { if ... { out.push(...) } }`.
-- `match items { [head, ..tail] => ...; [] => ... }` over `length()` checks and
-  manual indexing.
-- String/StringView pattern matching (and `s.view()` where an explicit view helps
-  avoid ownership ambiguity) over converting strings to arrays.
-- `Type(args...)` over record literals when the type provides a custom public
-  constructor.
-
-Use mutation only when the data structure is genuinely stateful: builders,
-consumption markers, interop/DOM state, or measured hot paths.
-
 ### Convert Free Functions to Methods + Chaining
 - Move behavior onto the owning type for discoverability.
 - Use `..` for fluent, mutating chains when it reads clearly.
@@ -216,7 +193,6 @@ match token {
 ```
 ### Prefer Functional Loops to Mutation When Possible
 
-- **Ban `for .. in` + a `let mut` accumulator** (e.g. `let mut acc = 0; for x in xs { acc += x }`), even for a "simple" case — that "simple case is fine" exception is removed. Use a functional-state loop (`for x in xs; acc = init { continue f(acc, x) } nobreak { acc }`) or an `Iter`/`Array` method (`fold`, `sum`, `map`, `filter`, `collect`) instead. Mutation inside `for .. in` is allowed ONLY when genuinely necessary: a builder, a true state machine, a consumption marker, interop/DOM state, or a measured hot path — and name which one applies.
 - Use functional state update
 
 Example:

@@ -1,12 +1,25 @@
 {
+  "name": "@dowdiness/skills",
+  "version": "0.0.0",
   "type": "module",
   "private": true,
+  "keywords": ["pi-package"],
   "scripts": {
     "install-local": "nu scripts/install.nu",
     "list": "node scripts/list.mjs",
+    "sync-extensions-status": "node scripts/sync-vendor-extensions.mjs --dry-run",
     "sync-status": "node scripts/sync-vendor-skills.mjs --dry-run",
     "sync-vendor": "node scripts/sync-vendor-skills.mjs",
+    "sync-vendor-extensions": "node scripts/sync-vendor-extensions.mjs",
     "uninstall-local": "nu scripts/uninstall.nu",
     "validate": "node scripts/validate.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
   }
 }

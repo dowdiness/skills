@@ -1,6 +1,6 @@
 # Sync Info
 
 - **Source:** `vendor/dowdiness/moonbit-skills/moonbit-perf-investigation`
-- **Git SHA:** `41b7d8ebf0769fff62d0229bfb6691c2ab6017e7`
-- **Synced:** 2026-05-23
+- **Git SHA:** `2bcfff01acce879d0d2420060d0a7afafdea713d`
+- **Synced:** 2026-06-21
 

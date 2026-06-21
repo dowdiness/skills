@@ -53,3 +53,19 @@ export const deferredLocalSkills = [
   'shape',
   'typeset',
 ]
+
+export type ExtensionKind = SkillKind
+
+export interface ExtensionMeta {
+  name: string
+  kind: ExtensionKind
+  source: string
+  vendorPath?: string
+  sourceExtensionPath?: string
+  outputPath?: string
+  notes?: string
+}
+
+export const extensions: ExtensionMeta[] = []
+
+export const deferredLocalExtensions: string[] = []

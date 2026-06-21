@@ -1,8 +1,8 @@
 # Dowdiness Skills
 
-A curated collection of agent skills for MoonBit work, project-specific coding patterns, and reusable agent workflows.
+A curated collection of agent skills and pi extensions for MoonBit work, project-specific coding patterns, and reusable agent workflows.
 
-This repository follows the same basic shape as Anthony Fu's `antfu/skills`: `skills/` is the shareable output, `meta.ts` records where each skill comes from, and scripts provide lightweight validation for keeping the collection installable.
+This repository follows the same basic shape as Anthony Fu's `antfu/skills`: `skills/` is the shareable skill output, `extensions/` is the shareable pi extension output, `meta.ts` records where each item comes from, and scripts provide lightweight validation for keeping the collection installable.
 
 ## Installation
 
@@ -10,6 +10,12 @@ When published on GitHub, install selected skills with the Agent Skills CLI:
 
 ```bash
 pnpx skills add dowdiness/skills --skill='*'
+```
+
+Install the full pi package (skills plus extensions) with pi:
+
+```bash
+pi install git:github.com/dowdiness/skills
 ```
 
 ### Prerequisites
@@ -67,11 +73,12 @@ This backs up conflicting paths to:
 
 Then rerun `./scripts/install.nu` for strict mode.
 
-This symlinks every directory in `skills/` into:
+This symlinks every directory in `skills/` and every `.ts` file or directory extension in `extensions/` into:
 
 - `~/.agents/skills/`
 - `~/.claude/skills/`
 - `~/.codex/skills/`
+- `~/.pi/agent/extensions/`
 
 ## Uninstallation
 
@@ -151,14 +158,23 @@ npm run uninstall-local
 | `orchestrate` | manual | Cross-repo and multiagent session setup with delegation checkpoints and worker-output intake. |
 | `tuple-wrapper-api-style` | manual | Tuple wrapper API style for stable public constructors and concise internals. |
 
+## Extensions
+
+| Extension | Origin | Description |
+|---|---|---|
+| *(none yet)* | — | — |
+
+Extensions are pi agent extensions (`.ts` files) that register custom tools, commands, event hooks, and UI components. See the [pi extensions docs](https://pi.dev/docs/extensions) for authoring details.
+
 ## Repository Layout
 
 ```text
 skills/      Final shareable skill directories. Each child has a SKILL.md.
-sources/     Source repositories or notes used to generate/sync skills.
+extensions/  Final shareable extension files. Each entry is <name>.ts or <name>/index.ts.
+sources/     Source repositories or notes used to generate/sync skills and extensions.
 vendor/      Upstream or user-owned vendor source markers.
 scripts/     Local validation and catalog helpers.
-meta.ts      Canonical skill source metadata.
+meta.ts      Canonical skill and extension source metadata.
 ```
 
 ## Vendor Repositories
@@ -203,12 +219,18 @@ Validate the collection before publishing changes:
 npm run validate
 ```
 
-Validation also checks vendored skills for drift: every entry with `sourceSkillPath` and `outputPath` in `meta.ts` must match its source directory, excluding `SYNC.md`.
+Validation also checks vendored skills and extensions for drift: every entry with source and output paths in `meta.ts` must match its source, excluding sync metadata.
 
 Sync all vendored skills from their source repositories:
 
 ```bash
 npm run sync-vendor
+```
+
+Sync all vendored extensions from their source repositories:
+
+```bash
+npm run sync-vendor-extensions
 ```
 
 Sync selected vendored skills by name:
@@ -223,7 +245,7 @@ Preview drift without writing files:
 npm run sync-vendor -- --dry-run
 ```
 
-List the catalog derived from `skills/*/SKILL.md`:
+List the catalog derived from `skills/*/SKILL.md` and `extensions/`:
 
 ```bash
 npm run list

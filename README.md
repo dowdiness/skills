@@ -162,7 +162,8 @@ npm run uninstall-local
 
 | Extension | Origin | Description |
 |---|---|---|
-| *(none yet)* | — | — |
+| `canopy-scheduler` | manual | Routes high-confidence Canopy tasks to subagents, including patch capture and package-aware validation helpers. |
+| `subagent` | manual | Adds the `subagent` tool for isolated single, parallel, or chained delegation to user/project agents. |
 
 Extensions are pi agent extensions (`.ts` files) that register custom tools, commands, event hooks, and UI components. See the [pi extensions docs](https://pi.dev/docs/extensions) for authoring details.
 

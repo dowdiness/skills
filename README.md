@@ -1,259 +1,60 @@
 # Dowdiness Skills
 
-A curated collection of agent skills and pi extensions for MoonBit work, project-specific coding patterns, and reusable agent workflows.
+Agent skills and pi extensions for MoonBit work, project-specific coding patterns, and reusable workflows.
 
-This repository follows the same basic shape as Anthony Fu's `antfu/skills`: `skills/` is the shareable skill output, `extensions/` is the shareable pi extension output, `meta.ts` records where each item comes from, and scripts provide lightweight validation for keeping the collection installable.
+This repo is both:
 
-## Installation
+- a skill collection (`skills/*/SKILL.md`)
+- a pi package (`package.json` → `pi.skills` and `pi.extensions`)
 
-When published on GitHub, install selected skills with the Agent Skills CLI:
+## Install
+
+Install the full pi package:
+
+```bash
+pi install git:github.com/dowdiness/skills
+pi list
+pi --offline --no-session --no-tools -p "respond ok"
+```
+
+If you already have local copies of these skills or extensions, use the conflict-safe helper from a checkout:
+
+```bash
+git clone --recursive https://github.com/dowdiness/skills.git
+cd skills
+npm run install-pi-package
+```
+
+The helper backs up colliding local resources before running `pi install`.
+See [`scripts/README.md`](scripts/README.md#pi-package-install-helper).
+
+Install skills only with the Agent Skills CLI:
 
 ```bash
 pnpx skills add dowdiness/skills --skill='*'
 ```
 
-Install the full pi package (skills plus extensions) with pi:
+## What's included
 
-```bash
-pi install git:github.com/dowdiness/skills
-```
+- [`skills/`](skills/) — MoonBit, incr, loom, handoff, orchestration, and API-style skills.
+- [`extensions/`](extensions/) — pi extensions for subagent delegation and Canopy scheduling.
+- [`scripts/`](scripts/) — validation, local install, cleanup, and vendor-sync helpers.
+- [`vendor/`](vendor/) — submodule sources for vendored skills.
+- [`sources/`](sources/) — notes for generated or historical source material.
 
-### Prerequisites
-
-The local install, uninstall, and cleanup scripts are written in [Nushell](https://www.nushell.sh/) (≥ 0.100). Install it with one of:
-
-```bash
-brew install nushell                # macOS / Linuxbrew
-cargo install nu                    # any platform with Rust toolchain
-winget install nushell.nushell      # Windows
-```
-
-See [nushell.sh/book/installation.html](https://www.nushell.sh/book/installation.html) for the full installer matrix.
-
-#### moonbit-housekeeping: BAML / uv
-
-The `moonbit-housekeeping` skill ships `parse-worker-output.py`, a JSON validator powered by [BAML](https://www.boundaryml.com/) (`baml-lib`). The script declares its dependencies inline via [PEP 723](https://peps.python.org/pep-0723/) and runs through [uv](https://docs.astral.sh/uv/), which fetches Python 3.13 + `baml-lib` on first invocation.
-
-You only need `uv`. Install it with one of:
-
-```bash
-brew install uv                                                    # macOS / Linuxbrew
-curl -LsSf https://astral.sh/uv/install.sh | sh                    # macOS / Linux installer script
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
-```
-
-First run takes a few seconds while uv downloads the Python toolchain and `baml-lib`; subsequent runs hit the local cache. No manual `pip install` needed.
-
-Smoke test against a bundled fixture:
-
-```bash
-skills/moonbit-housekeeping/parse-worker-output.py \
-  --root Changelog --input skills/moonbit-housekeeping/tests/a1-changelog-clean.txt
-```
-
-Regression tests for the parser live at `skills/moonbit-housekeeping/tests/run-tests.nu`.
-
-### Local install
-
-```bash
-git clone --recursive https://github.com/dowdiness/skills.git
-cd skills
-./scripts/install.nu
-```
-
-If duplicates still exist from previous sessions, run the repair pass first:
-
-```bash
-./scripts/install.nu --repair
-```
-
-This backs up conflicting paths to:
-
-`$HOME/.local/share/dowdiness-skills-backup/<timestamp>`
-
-Then rerun `./scripts/install.nu` for strict mode.
-
-This symlinks every directory in `skills/` and every `.ts` file or directory extension in `extensions/` into:
-
-- `~/.agents/skills/`
-- `~/.claude/skills/`
-- `~/.codex/skills/`
-- `~/.pi/agent/extensions/`
-
-## Uninstallation
-
-Remove only symlinks that point back to this repository:
-
-```bash
-./scripts/uninstall.nu
-```
-
-## Repair duplicate skills safely
-
-If you encounter duplicate or leftover skill paths in agent directories, use the cleanup script in dry-run mode first:
-
-```bash
-./scripts/cleanup-duplicate-skills.nu
-```
-
-If the listed entries are expected duplicates, apply the move to backup:
-
-```bash
-./scripts/cleanup-duplicate-skills.nu --apply
-```
-
-Then re-run local installation:
-
-```bash
-./scripts/install.nu
-```
-
-To rollback from a previous backup directory, use:
-
-```bash
-./scripts/cleanup-duplicate-skills.nu --restore <backup-dir>
-```
-
-To verify duplicate state without moving files, use:
-
-```bash
-./scripts/cleanup-duplicate-skills.nu --check
-```
-
-The cleanup script is conservative:
-
-- it only targets directories that match skill names in `skills/`
-- it keeps symlinks that already point to this repository
-- it skips unrelated files/dirs so only confirmed duplicates are moved
-- it places moved entries under a timestamped backup directory for easy restore
-
-The same actions are also available through npm:
-
-```bash
-npm run install-local
-npm run uninstall-local
-```
-
-## Skills
-
-| Skill | Origin | Description |
-|---|---|---|
-| `moonbit` | manual | Router for the MoonBit skill family. |
-| `moonbit-agent-guide` | vendor | Official MoonBit coding, layout, and tooling guide. |
-| `moonbit-c-binding` | vendor | Official native C binding and FFI guide. |
-| `moonbit-refactoring` | vendor | Official idiomatic MoonBit refactoring guide. |
-| `moonbit-agent-setup` | vendor | Bootstraps project instructions for Codex, Claude Code, and generic agents. |
-| `moonbit-deprecated-syntax` | vendor | Tracks deprecated MoonBit syntax and replacement patterns. |
-| `moonbit-error-handling` | vendor | Error type, abort/fail/raise, and recovery boundary guidance. |
-| `moonbit-expression-problem` | vendor | Finally Tagless and two-layer extensibility patterns in MoonBit. |
-| `moonbit-housekeeping` | manual | Repo maintenance workflow with BAML-backed worker output parsing. |
-| `moonbit-opaque-types` | vendor | Opaque/newtype public API design patterns. |
-| `moonbit-perf-investigation` | vendor | Measurement-first performance investigation workflow. |
-| `moonbit-refactoring-safety` | vendor | Safety discipline for boundary-crossing MoonBit refactors. |
-| `moonbit-traits` | vendor | Practical trait patterns for MoonBit's Self-based trait system. |
-| `moonbit-verification` | vendor | MoonBit quality checklist for dependencies, syntax, tests, and interfaces. |
-| `incr` | vendor | User-owned library skill for the `dowdiness/incr` reactive library. |
-| `loom` | vendor | User-owned library skill for the `dowdiness/loom` parser framework. |
-| `handoff` | manual | End-of-session ritual for memory updates, next-session prompts, and clear readiness. |
-| `orchestrate` | manual | Cross-repo and multiagent session setup with delegation checkpoints and worker-output intake. |
-| `tuple-wrapper-api-style` | manual | Tuple wrapper API style for stable public constructors and concise internals. |
-
-## Extensions
-
-| Extension | Origin | Description |
-|---|---|---|
-| `canopy-scheduler` | manual | Routes high-confidence Canopy tasks to subagents, including patch capture and package-aware validation helpers. |
-| `subagent` | manual | Adds the `subagent` tool for isolated single, parallel, or chained delegation to user/project agents. |
-
-Extensions are pi agent extensions (`.ts` files) that register custom tools, commands, event hooks, and UI components. See the [pi extensions docs](https://pi.dev/docs/extensions) for authoring details.
-
-## Repository Layout
-
-```text
-skills/      Final shareable skill directories. Each child has a SKILL.md.
-extensions/  Final shareable extension files. Each entry is <name>.ts or <name>/index.ts.
-sources/     Source repositories or notes used to generate/sync skills and extensions.
-vendor/      Upstream or user-owned vendor source markers.
-scripts/     Local validation and catalog helpers.
-meta.ts      Canonical skill and extension source metadata.
-```
-
-## Vendor Repositories
-
-Like `antfu/skills`, source repositories used for vendored skills live under `vendor/` as Git submodules.
-
-```bash
-git submodule update --init --recursive
-```
-
-Current vendor sources:
-
-- `vendor/moonbitlang/moonbit-agent-guide` -> `https://github.com/moonbitlang/moonbit-agent-guide`
-- `vendor/dowdiness/moonbit-skills` -> `https://github.com/dowdiness/moonbit-skills`
-- `vendor/dowdiness/incr` -> `https://github.com/dowdiness/incr`
-- `vendor/dowdiness/loom` -> `https://github.com/dowdiness/loom`
-
-The installable skill output remains under `skills/`. Update the source repository first, then sync the corresponding skill output here:
-
-- `vendor/moonbitlang/moonbit-agent-guide/moonbit-agent-guide/SKILL.md` -> `skills/moonbit-agent-guide/SKILL.md`
-- `vendor/moonbitlang/moonbit-agent-guide/moonbit-c-binding/SKILL.md` -> `skills/moonbit-c-binding/SKILL.md`
-- `vendor/moonbitlang/moonbit-agent-guide/moonbit-refactoring/SKILL.md` -> `skills/moonbit-refactoring/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-agent-setup/SKILL.md` -> `skills/moonbit-agent-setup/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-deprecated-syntax/SKILL.md` -> `skills/moonbit-deprecated-syntax/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-error-handling/SKILL.md` -> `skills/moonbit-error-handling/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-expression-problem/SKILL.md` -> `skills/moonbit-expression-problem/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-opaque-types/SKILL.md` -> `skills/moonbit-opaque-types/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-perf-investigation/SKILL.md` -> `skills/moonbit-perf-investigation/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-refactoring-safety/SKILL.md` -> `skills/moonbit-refactoring-safety/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-traits/SKILL.md` -> `skills/moonbit-traits/SKILL.md`
-- `vendor/dowdiness/moonbit-skills/moonbit-verification/SKILL.md` -> `skills/moonbit-verification/SKILL.md`
-- `vendor/dowdiness/incr/skills/incr/SKILL.md` -> `skills/incr/SKILL.md`
-- `vendor/dowdiness/loom/skills/loom/SKILL.md` -> `skills/loom/SKILL.md`
-
-For vendor skills, treat the source repository as authoritative. Do not edit the synced copy in `skills/` directly except for sync metadata.
-
-## Maintenance
-
-Validate the collection before publishing changes:
+## Common commands
 
 ```bash
 npm run validate
-```
-
-Validation also checks vendored skills and extensions for drift: every entry with source and output paths in `meta.ts` must match its source, excluding sync metadata.
-
-Sync all vendored skills from their source repositories:
-
-```bash
-npm run sync-vendor
-```
-
-Sync all vendored extensions from their source repositories:
-
-```bash
-npm run sync-vendor-extensions
-```
-
-Sync selected vendored skills by name:
-
-```bash
-npm run sync-vendor -- moonbit-housekeeping incr
-```
-
-Preview drift without writing files:
-
-```bash
-npm run sync-vendor -- --dry-run
-```
-
-List the catalog derived from `skills/*/SKILL.md` and `extensions/`:
-
-```bash
 npm run list
+npm run sync-status
+npm run sync-extensions-status
 ```
 
-Keep generated or synced skills concise. Prefer updating the upstream source and then syncing into `skills/`; do not let local copies drift silently.
+For local symlink installation, cleanup, and migration details, see [`scripts/README.md`](scripts/README.md).
 
-## Notes
+## Source of truth
 
-The current initial import is intentionally conservative. UI/design skills and third-party best-practice skills installed locally are not copied until their licenses and source-of-truth repositories are explicitly recorded.
+`meta.ts` is the catalog for skill and extension ownership.
+
+For vendored content, update the upstream/source repo first, then sync this repo. Do not let copied outputs in `skills/` or `extensions/` drift silently.

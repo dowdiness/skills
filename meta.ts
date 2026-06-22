@@ -66,6 +66,9 @@ export interface ExtensionMeta {
   notes?: string
 }
 
-export const extensions: ExtensionMeta[] = []
+export const extensions: ExtensionMeta[] = [
+  { name: 'canopy-scheduler', kind: 'manual', source: 'local-pi', outputPath: 'extensions/canopy-scheduler', notes: 'Routes high-confidence Canopy tasks to subagents and records scheduler patch/validation state.' },
+  { name: 'subagent', kind: 'manual', source: 'local-pi', outputPath: 'extensions/subagent', notes: 'Registers the subagent delegation tool with user/project agent discovery and fallback handling.' },
+]
 
 export const deferredLocalExtensions: string[] = []

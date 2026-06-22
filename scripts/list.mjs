@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { extensions } from '../meta.ts'
 import { parseFrontmatter } from './frontmatter.mjs'
 
 const root = new URL('..', import.meta.url).pathname
@@ -36,11 +37,13 @@ if (!existsSync(extensionsDir)) {
     }
     if (!name) continue
 
-    let description = ''
-    try {
-      const text = await readFile(sourcePath, 'utf8')
-      description = text.match(/description:\s*['"]([^'"]+)['"]/)?.[1] ?? ''
-    } catch {}
+    let description = extensions.find((ext) => ext.name === name)?.notes ?? ''
+    if (!description) {
+      try {
+        const text = await readFile(sourcePath, 'utf8')
+        description = text.match(/description:\s*['"]([^'"]+)['"]/)?.[1] ?? ''
+      } catch {}
+    }
     console.log(`${name}\t${description}`)
     printed = true
   }

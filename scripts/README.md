@@ -43,14 +43,22 @@ The preferred install path is now the pi package (`pi install git:github.com/dow
 npm run install-pi-package
 ```
 
-Runs `pi install git:github.com/dowdiness/skills` after backing up any locally installed skills or extensions that would collide with the package resources. Backups go to `~/.pi/agent/dowdiness-skills-local-backup-<timestamp>/`.
+Runs `pi install git:github.com/dowdiness/skills` without duplicate resource warnings:
+
+1. backs up local skills/extensions that would collide,
+2. installs or updates the pi package,
+3. disables this package's pi skill resources in `settings.json`, and
+4. recreates `~/.agents`, `~/.claude`, and `~/.codex` skill symlinks to the installed package.
+
+That keeps package-managed extensions active while preserving compatibility with hosts that still discover skills from `~/.agents/skills`. Backups go to `~/.pi/agent/dowdiness-skills-local-backup-<timestamp>/`.
 
 Options:
 
 ```bash
-node scripts/install-pi-package.mjs --dry-run       # show what would be backed up
-node scripts/install-pi-package.mjs --no-install    # back up collisions but skip pi install
-node scripts/install-pi-package.mjs <source>        # install from a different source
+node scripts/install-pi-package.mjs --dry-run             # show what would be backed up
+node scripts/install-pi-package.mjs --no-install          # back up/link only; skip pi install
+node scripts/install-pi-package.mjs --keep-package-skills # do not filter package skills or create compatibility symlinks
+node scripts/install-pi-package.mjs <source>              # install from a different source
 ```
 
 ## Sync vendor content

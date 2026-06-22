@@ -1,25 +1,34 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readdirSync, renameSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { lstatSync, mkdirSync, readlinkSync, renameSync, symlinkSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 
 const root = new URL('..', import.meta.url).pathname
 const home = process.env.HOME
+const defaultSource = 'git:github.com/dowdiness/skills'
 
 function usage() {
-  console.log(`Usage: node scripts/install-pi-package.mjs [source] [--dry-run] [--no-install]
+  console.log(`Usage: node scripts/install-pi-package.mjs [source] [--dry-run] [--no-install] [--keep-package-skills]
 
 Installs this repository as a pi package without duplicate local resources.
-Before running pi install, it backs up local auto-discovered skills/extensions
-that would collide with the package resources.
+
+Default behavior:
+  - back up local extension copies that would conflict with package extensions
+  - back up local skill copies/symlinks managed by this repo
+  - run pi install
+  - disable this package's pi skill resources in settings
+  - recreate ~/.agents, ~/.claude, and ~/.codex skill symlinks to the installed package
+
+This keeps pi extensions package-managed while preserving skill compatibility
+for hosts that still discover skills from ~/.agents/skills.
 
 Defaults:
-  source: git:github.com/dowdiness/skills
+  source: ${defaultSource}
 
 Examples:
   npm run install-pi-package
-  node scripts/install-pi-package.mjs git:github.com/dowdiness/skills
+  node scripts/install-pi-package.mjs ${defaultSource}
   node scripts/install-pi-package.mjs ./ --dry-run`)
 }
 
@@ -31,16 +40,17 @@ if (args.includes('--help') || args.includes('-h')) {
 
 const dryRun = args.includes('--dry-run')
 const noInstall = args.includes('--no-install')
-const source = args.find((arg) => !arg.startsWith('--')) ?? 'git:github.com/dowdiness/skills'
+const keepPackageSkills = args.includes('--keep-package-skills')
+const source = args.find((arg) => !arg.startsWith('--')) ?? defaultSource
 
 if (!home) {
   console.error('ERROR: HOME is not set')
   process.exit(1)
 }
 
-function exists(path) {
+function pathExists(path) {
   try {
-    statSync(path)
+    lstatSync(path)
     return true
   } catch {
     return false
@@ -51,18 +61,18 @@ function listSkillNames() {
   const dir = join(root, 'skills')
   return readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .filter((entry) => exists(join(dir, entry.name, 'SKILL.md')))
+    .filter((entry) => pathExists(join(dir, entry.name, 'SKILL.md')))
     .map((entry) => entry.name)
     .sort()
 }
 
-function listExtensionLocalPaths() {
+function listExtensionNames() {
   const dir = join(root, 'extensions')
-  if (!exists(dir)) return []
+  if (!pathExists(dir)) return []
   return readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.name !== '.gitkeep')
     .flatMap((entry) => {
-      if (entry.isDirectory() && exists(join(dir, entry.name, 'index.ts'))) return [entry.name]
+      if (entry.isDirectory() && pathExists(join(dir, entry.name, 'index.ts'))) return [entry.name]
       if (entry.isFile() && entry.name.endsWith('.ts')) return [entry.name]
       return []
     })
@@ -75,22 +85,52 @@ function timestamp() {
   return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 
+function sameSymlink(linkPath, targetPath) {
+  try {
+    const stat = lstatSync(linkPath)
+    if (!stat.isSymbolicLink()) return false
+    return resolve(join(linkPath, '..'), readlinkSync(linkPath)) === targetPath
+  } catch {
+    return false
+  }
+}
+
+function inferInstalledPackageRoot() {
+  if (source.includes('github.com/dowdiness/skills')) return join(home, '.pi', 'agent', 'git', 'github.com', 'dowdiness', 'skills')
+  if (isAbsolute(source) || source.startsWith('./') || source.startsWith('../')) return resolve(source)
+  return null
+}
+
+const installedPackageRoot = inferInstalledPackageRoot()
 const backupRoot = join(home, '.pi', 'agent', `dowdiness-skills-local-backup-${timestamp()}`)
 const backupSkills = join(backupRoot, 'skills')
 const backupExtensions = join(backupRoot, 'extensions')
 const moves = []
+const skillNames = listSkillNames()
+const extensionNames = listExtensionNames()
 
-for (const name of listSkillNames()) {
-  const from = join(home, '.agents', 'skills', name)
-  if (exists(from)) moves.push({ from, to: join(backupSkills, name) })
+const skillTargets = [
+  { label: 'agents', dir: join(home, '.agents', 'skills') },
+  { label: 'claude', dir: join(home, '.claude', 'skills') },
+  { label: 'codex', dir: join(home, '.codex', 'skills') },
+]
+
+for (const name of skillNames) {
+  for (const target of skillTargets) {
+    const from = join(target.dir, name)
+    const expected = installedPackageRoot ? join(installedPackageRoot, 'skills', name) : null
+    if (pathExists(from) && (!expected || !sameSymlink(from, expected))) {
+      moves.push({ from, to: join(backupSkills, target.label, name) })
+    }
+  }
 }
 
-for (const entryName of listExtensionLocalPaths()) {
-  const candidates = entryName.endsWith('.ts')
-    ? [join(home, '.pi', 'agent', 'extensions', entryName)]
-    : [join(home, '.pi', 'agent', 'extensions', entryName), join(home, '.pi', 'agent', 'extensions', `${entryName}.ts`)]
+for (const name of extensionNames) {
+  const candidates = name.endsWith('.ts')
+    ? [join(home, '.pi', 'agent', 'extensions', name)]
+    : [join(home, '.pi', 'agent', 'extensions', name), join(home, '.pi', 'agent', 'extensions', `${name}.ts`)]
   for (const from of candidates) {
-    if (exists(from)) moves.push({ from, to: join(backupExtensions, basename(from)) })
+    if (pathExists(from)) moves.push({ from, to: join(backupExtensions, basename(from)) })
   }
 }
 
@@ -98,24 +138,53 @@ if (moves.length === 0) {
   console.log('No local skill/extension collisions found.')
 } else {
   console.log(`Backing up ${moves.length} local resource(s) to ${backupRoot}`)
-  for (const move of moves) {
-    console.log(`${dryRun ? 'DRY ' : ''}MOVE ${move.from} -> ${move.to}`)
-  }
+  for (const move of moves) console.log(`${dryRun ? 'DRY ' : ''}MOVE ${move.from} -> ${move.to}`)
   if (!dryRun) {
-    mkdirSync(backupSkills, { recursive: true })
-    mkdirSync(backupExtensions, { recursive: true })
-    for (const move of moves) renameSync(move.from, move.to)
+    for (const move of moves) {
+      mkdirSync(join(move.to, '..'), { recursive: true })
+      renameSync(move.from, move.to)
+    }
   }
 }
 
-if (dryRun || noInstall) {
-  console.log(dryRun ? 'Dry run complete; pi install not run.' : 'Skipped pi install (--no-install).')
+if (dryRun) {
+  console.log('Dry run complete; pi install not run and settings not changed.')
   process.exit(0)
 }
 
-const result = spawnSync('pi', ['install', source], { stdio: 'inherit' })
-if (result.status !== 0) process.exit(result.status ?? 1)
+if (!noInstall) {
+  const result = spawnSync('pi', ['install', source], { stdio: 'inherit' })
+  if (result.status !== 0) process.exit(result.status ?? 1)
+} else {
+  console.log('Skipped pi install (--no-install).')
+}
 
-console.log('\nInstalled pi package. Run this smoke test to verify startup:')
+if (!keepPackageSkills) {
+  const settingsPath = join(home, '.pi', 'agent', 'settings.json')
+  if (pathExists(settingsPath)) {
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    settings.packages = (settings.packages ?? []).map((entry) => {
+      if (entry === source) return { source, skills: [] }
+      if (entry && typeof entry === 'object' && entry.source === source) return { ...entry, skills: [] }
+      return entry
+    })
+    writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`)
+    console.log(`Disabled package skill resources for ${source}; compatibility symlinks will provide skills.`)
+  }
+}
+
+if (!keepPackageSkills && installedPackageRoot && pathExists(join(installedPackageRoot, 'skills'))) {
+  for (const skillTarget of skillTargets) {
+    mkdirSync(skillTarget.dir, { recursive: true })
+    for (const name of skillNames) {
+      const target = join(installedPackageRoot, 'skills', name)
+      const linkPath = join(skillTarget.dir, name)
+      if (pathExists(target) && !pathExists(linkPath)) symlinkSync(target, linkPath, 'dir')
+    }
+  }
+  console.log('Linked compatibility skill directories from the installed package.')
+}
+
+console.log(noInstall ? '\nPrepared local resources. Run this smoke test after pi install:' : '\nInstalled pi package. Run this smoke test to verify startup:')
 console.log('  pi --offline --no-session --no-tools -p "respond ok"')
 if (moves.length > 0) console.log(`\nKeep backup until verified: ${backupRoot}`)

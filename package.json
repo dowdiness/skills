@@ -6,6 +6,7 @@
   "keywords": ["pi-package"],
   "scripts": {
     "install-local": "nu scripts/install.nu",
+    "install-pi-package": "node scripts/install-pi-package.mjs",
     "list": "node scripts/list.mjs",
     "sync-extensions-status": "node scripts/sync-vendor-extensions.mjs --dry-run",
     "sync-status": "node scripts/sync-vendor-skills.mjs --dry-run",

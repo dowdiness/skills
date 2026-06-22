@@ -25,7 +25,7 @@ cd skills
 npm run install-pi-package
 ```
 
-The helper backs up colliding local resources before running `pi install`.
+The helper backs up colliding local resources, installs the package, and keeps compatibility symlinks for hosts that still read `~/.agents/skills`.
 See [`scripts/README.md`](scripts/README.md#pi-package-install-helper).
 
 Install skills only with the Agent Skills CLI:

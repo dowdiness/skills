@@ -30,6 +30,7 @@ export const skills: SkillMeta[] = [
   { name: 'handoff', kind: 'manual', source: 'in-tree' },
   { name: 'orchestrate', kind: 'manual', source: 'in-tree', notes: 'Cross-repo and multiagent session setup with delegation checkpoints and structured worker-output intake.' },
   { name: 'tuple-wrapper-api-style', kind: 'manual', source: 'in-tree' },
+  { name: 'pr-analysis', kind: 'manual', source: 'in-tree', notes: 'Strategic PR evaluation with concise default and full opt-in template.' },
 ]
 
 export const deferredLocalSkills = [

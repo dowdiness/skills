@@ -67,9 +67,13 @@ tests that only exercise the direct path.
 ## `derive(Debug(ignore=[...]))` only filters top-level field types
 
 `ignore=[...]` matches a field's declared type exactly — it does not look
-inside containers. A field like `dispose_hooks : Array[() -> Unit]` is
-**not** covered by `ignore=[Fn]`, because the field's own type is `Array`,
-not `Fn`.
+inside containers. Verified on moonc 0.1.20260629: given `type Fn = () ->
+Unit` and `struct S { hooks : Array[Fn]; n : NoDebug } derive(Debug(ignore=
+[NoDebug, Fn]))`, `ignore` successfully suppresses the error for `n :
+NoDebug` (a direct field-type match) but **not** for `hooks : Array[Fn]` —
+the field's own type is `Array`, not `Fn`, so `Fn` in the ignore list never
+matches it. `moon check` still fails with `Type () -> Unit does not
+implement trait ... Debug`.
 
 Fix: for structs with non-`Debug` types nested inside `Array`/`Option`/etc.,
 write a manual `pub impl Debug for T with to_repr(self)` instead of relying
@@ -108,10 +112,18 @@ pass or fail, rather than leaving it as an assumption in either direction.
 
 The compiling form is `guard <expr> is <Pattern> else { ... }`. The
 superficially similar `guard let <Pattern> = <expr> else { ... }` does
-**not** compile as an early-exit binder — it parses as a `Unit` statement
-and the binder does not escape into the following scope. If you encounter
-`guard let ... else` written as MoonBit, it needs rewriting to `guard ...
-is ... else`.
+**not** work as an early-exit binder. Verified on moonc 0.1.20260629, it is
+now a **hard compile error**, not a silent pass-through: `Expr Type
+Mismatch` (the let-statement's `Unit` type doesn't satisfy the `Bool` guard
+condition expects), `Using let statement in 'let' directly is not allowed`,
+and an unbound-identifier error for the pattern binding once the body tries
+to use it. Earlier accounts of this trap described the binder as silently
+failing to escape the guard's scope — that specific silent-failure
+characterization does not match this compiler version, but the fix is the
+same regardless of which failure mode you hit: rewrite to `guard ... is
+... else`. The compiler's own errors don't suggest that fix, so don't
+assume from the error text alone that a different `let` variant is the
+answer.
 
 ## `is-internal` is not a real moon.pkg field
 

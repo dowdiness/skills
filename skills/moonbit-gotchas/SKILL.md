@@ -64,16 +64,24 @@ on an implementor, exercise at least one call through `&Trait` dispatch in
 tests, not just the concrete-struct path — the collision can hide behind
 tests that only exercise the direct path.
 
+Verified on moonc v0.10.2 (2026-06-29): a minimal repro (`trait` + struct
+with a matching closure field + `impl ... with get(self, x) { self.get(x) }`
+dispatched through a generic `fn[T : Trait]` call) compiles with only an
+`unused_field` warning on the closure field — static confirmation the
+compiler never treats `self.get(x)` as reading it — and the resulting test
+hangs (still running after a 20s timeout), consistent with the described
+infinite loop.
+
 ## `derive(Debug(ignore=[...]))` only filters top-level field types
 
 `ignore=[...]` matches a field's declared type exactly — it does not look
-inside containers. Verified on moonc 0.1.20260629: given `type Fn = () ->
-Unit` and `struct S { hooks : Array[Fn]; n : NoDebug } derive(Debug(ignore=
-[NoDebug, Fn]))`, `ignore` successfully suppresses the error for `n :
-NoDebug` (a direct field-type match) but **not** for `hooks : Array[Fn]` —
-the field's own type is `Array`, not `Fn`, so `Fn` in the ignore list never
-matches it. `moon check` still fails with `Type () -> Unit does not
-implement trait ... Debug`.
+inside containers. Verified on moonc v0.10.2 (2026-06-29): given
+`type Fn = () -> Unit` and `struct S { hooks : Array[Fn]; n : NoDebug }
+derive(Debug(ignore=[NoDebug, Fn]))`, `ignore` successfully suppresses the
+error for `n : NoDebug` (a direct field-type match) but **not** for
+`hooks : Array[Fn]` — the field's own type is `Array`, not `Fn`, so `Fn` in
+the ignore list never matches it. `moon check` still fails with
+`Type () -> Unit does not implement trait ... Debug`.
 
 Fix: for structs with non-`Debug` types nested inside `Array`/`Option`/etc.,
 write a manual `pub impl Debug for T with to_repr(self)` instead of relying
@@ -94,6 +102,16 @@ and commit the regenerated `pkg.generated.mbti`. Running `moon info
 --target js` alone leaves the checked interface stale (missing the js-only
 functions) even though the inspection command reported them present.
 
+Verified end-to-end on moonc v0.10.2 (2026-06-29): with a `#cfg(target="js")
+pub fn` and `preferred_target = "wasm-gc"`, `moon info --target js` prints a
+diff showing the function present only on the `Js` backend, and
+`pkg.generated.mbti` stays unchanged (function absent). Flipping the
+module's `preferred_target` to `"js"` and re-running plain `moon info` (no
+`--target` flag) regenerates `pkg.generated.mbti` with the function present
+— matching `moon info --help`'s own description: "`--target` inspects
+backend-specific interfaces ... but does not change which backend is
+written to `pkg.generated.mbti`."
+
 ## JS numeric behavior is worth proving, not assuming
 
 `Int64` division, `to_string`, and float formatting can in principle differ
@@ -107,13 +125,17 @@ NEW_MOON_MOD=0 moon test --target js -p <pkg>
 
 This is cheap and turns a "might differ on JS" review comment into a proven
 pass or fail, rather than leaving it as an assumption in either direction.
+Verified on moonc v0.10.2 (2026-06-29): the command runs as documented, and
+an `Int64` division/`to_string` test passed identically on the default
+target and `--target js`.
 
 ## `guard` early-exit syntax
 
 The compiling form is `guard <expr> is <Pattern> else { ... }`. The
 superficially similar `guard let <Pattern> = <expr> else { ... }` does
-**not** work as an early-exit binder. Verified on moonc 0.1.20260629, it is
-now a **hard compile error**, not a silent pass-through: `Expr Type
+**not** work as an early-exit binder. Verified on moonc v0.10.2
+(2026-06-29): it is now a **hard compile error**, not a silent
+pass-through: `Expr Type
 Mismatch` (the let-statement's `Unit` type doesn't satisfy the `Bool` guard
 condition expects), `Using let statement in 'let' directly is not allowed`,
 and an unbound-identifier error for the pattern binding once the body tries
@@ -134,6 +156,14 @@ internal packages is the `internal/` **directory path segment** itself
 (compiler-enforced, Go-style convention), not a config flag. Verify by
 grepping the MoonBit stdlib (`~/.moon/lib/core/**`, which has dozens of
 `internal/*` packages) for the string — zero hits.
+
+Verified operationally on moonc v0.10.2 (2026-06-29): adding `options(
+"is-internal": true,)` to a package's `moon.pkg` produces no schema error
+from `moon check`, and a separate package still imports and uses that
+package's `pub` API without issue — the key is silently accepted and has
+no enforcement effect, not merely absent from documentation. `moon.pkg`
+does not appear to validate option keys strictly, so a reviewer-suggested
+option name compiling clean is not evidence it does anything.
 
 ## `pub` closes construction only, not interior mutation
 
@@ -158,15 +188,34 @@ the compiler rejects both. An `.mbti` diff alone won't surface the
 interior-mutation hole — it only reflects what's constructible, not what's
 still mutable through a returned reference.
 
-## `moon fmt` can delete comments, and reformats multi-line arrow bodies
+Verified end-to-end on moonc v0.10.2 (2026-06-29) across two packages: a
+`pub struct Box { items : Array[Int] }` with a constructor and an accessor
+returning `self.items`. From the consuming package, `Box::{ items: [...] }`
+literal construction fails to compile (`Cannot create values of the
+read-only type`), but `Box::items(b).push(99)` compiles clean and the
+mutation is observable afterward (`Box::items(b).length()` went from 3 to
+4 at runtime) — construction was closed, interior mutation was not.
 
-- A closure body containing only `//` comments is treated as empty and
-  collapsed to `fn() {  }` — **deleting the comments**. Don't accept this
-  diff. Move the comment above the enclosing call/statement and write the
-  body as the conventional empty callback `() => ()`. Verify idempotence
-  with `moonfmt <file> | diff <file> -`. (Observed on moonc v0.10.x.)
-- `x => expr` (no braces) is only stable when the whole expression fits on
-  one line. Any multi-line body gets rewritten to `x => { ... }` with
-  braces added on the next `moon fmt` pass — write multi-line lambda
-  bodies with braces from the start to avoid formatter churn on the next
-  run.
+## `moon fmt` reformats multi-line arrow bodies with braces
+
+`x => expr` (no braces) is only stable when the whole expression fits on
+one line. Any body long enough to force a line break gets rewritten to
+`x => { ... }` with braces added on the next `moon fmt` pass — write
+multi-line lambda bodies with braces from the start to avoid formatter
+churn on the next run. Verified on moonc v0.10.2 (2026-06-29): a short
+multi-line arrow body that fit on one line after whitespace collapse was
+just joined onto one line (no braces added), but a body long enough to
+require an actual line break was wrapped in `{ }` as described.
+
+**Unverified / possibly stale:** a source memory (dated 2026-07-05,
+`moonc v0.10.x` unspecified patch) reported that a closure body containing
+only `//` comments gets collapsed to `fn() {  }`, deleting the comments.
+Two reasonable repros against moonc v0.10.2 (2026-06-29) — a `let`-bound
+comment-only closure and one passed as a labeled call argument — both
+preserved the comments through `moon fmt` unchanged. Either the original
+report needs a more specific trigger this repro didn't hit, or the
+behavior was introduced after 2026-06-29 and may since be fixed. Don't
+trust this entry without re-checking against your own `moonc` version; if
+you do hit it, `moonfmt <file> | diff <file> -` will show the deletion,
+and the fix is to move the comment above the enclosing call/statement and
+write the body as `() => ()`.

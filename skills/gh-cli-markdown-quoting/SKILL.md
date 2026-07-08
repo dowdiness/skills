@@ -20,6 +20,13 @@ sees the string. The result: mangled PR/issue bodies, phantom files created
 by stray redirects, or search patterns that silently run commands instead of
 matching text.
 
+Verified directly: a double-quoted string containing literal (unescaped)
+`` `@scope.binder_span` `` and `` `echo INJECTED` `` had the first
+backtick-span dropped with a "command not found" error and the second
+silently replaced by its command's output — the Markdown code spans never
+survived. The same string written via a single-quoted heredoc came out
+byte-for-byte identical, backticks intact.
+
 ## The fix
 
 Write the body to a temp file with a **single-quoted heredoc delimiter**
@@ -48,7 +55,9 @@ it writes the exact bytes with no shell involved at all.
   Write an actual file and pass its path.
 - **Don't write the body file inside a submodule's `.git/`.** In a
   submodule checkout, `.git` is a *file* (a gitdir pointer), not a
-  directory — writing there fails with `ENOTDIR`. Use `/tmp/` instead.
+  directory — writing there fails with `ENOTDIR` (verified directly: `file
+  <submodule>/.git` reports "ASCII text", and a write into it fails with
+  "Not a directory"). Use `/tmp/` instead.
 - **Local commit/PR hooks can substring-match the raw command text, not
   just real invocations.** A hook that blocks Bash commands containing a
   flagged token (e.g. a build-tool subcommand name) often can't distinguish
@@ -58,12 +67,19 @@ it writes the exact bytes with no shell involved at all.
   (`git commit -F /tmp/msg`, `gh ... --body-file`) so the flagged token
   never appears in the literal Bash command the hook scans. The same
   applies to read-only commands: a `grep`/`rg` pipeline whose *pattern*
-  contains the flagged token trips the guard too.
+  contains the flagged token trips the guard too — confirmed with a hook
+  that blocks any Bash command containing a bare build-tool subcommand
+  name, which fired on an unrelated read-only command purely because that
+  substring appeared in it.
 - **The same shell-expansion trap hits search patterns, not just PR
   bodies.** A double-quoted `rg`/`grep` pattern containing a Markdown
   code-span (`` `fn` ``) executes the backticked text as a command before
-  the search tool ever sees it. Single-quote the pattern, or pipe it
-  through a pattern file:
+  the search tool ever sees it. Verified directly: a double-quoted pattern
+  containing that same code-span failed with `fn: command not found` on
+  stderr, then still ran with the substituted (weaker) pattern and
+  happened to match anyway — noisy, and exactly the kind of failure that
+  could silently hide a real miss on a less forgiving pattern.
+  Single-quote the pattern, or pipe it through a pattern file:
   ```bash
   rg -n 'typed-`fn`|source scanner' docs
   printf '%s\n' 'typed-`fn`' | rg -n -f -

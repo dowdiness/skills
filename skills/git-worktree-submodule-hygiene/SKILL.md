@@ -33,21 +33,23 @@ the concrete failure modes and their fixes, not a general git tutorial.
 ## 2. Worktree lifecycle
 
 - **`git worktree add` does not populate submodules.** The submodule
-  directories exist only as empty gitdir pointers until you run `git
+  directories are completely empty — not even a `.git` gitdir pointer,
+  verified with a local worktree+submodule repro — until you run `git
   submodule update --init --recursive`. Verify with `ls <submodule>/`
-  showing real files (e.g. `moon.mod.json`), not just `.git`, before running
-  any build/test tooling in the new worktree.
+  showing real files, not just `.git`, before running any build/test
+  tooling in the new worktree.
 - **Never remove a worktree without asking.** A branch showing as "merged"
   does not mean the worktree has no other uncommitted work sitting in it —
   treat worktrees like open editor tabs.
 - **Worktrees holding submodules resist `git worktree remove`** —
-  `fatal: working trees containing submodules cannot be moved or removed`.
-  After confirming the worktree is clean (`git -C <worktree> status --short
-  --branch`) and the branch's changes are captured on the target branch
-  (`git cherry -v origin/main <branch>` shows only `-` entries, or a
-  path-scoped diff against the target is empty), deinit its submodules first
-  (`git -C <worktree> submodule deinit -f --all`), then `git worktree remove
-  --force <worktree>`.
+  `fatal: working trees containing submodules cannot be moved or removed`
+  (verified verbatim, git 2.x). After confirming the worktree is clean
+  (`git -C <worktree> status --short --branch`) and the branch's changes
+  are captured on the target branch (`git cherry -v origin/main <branch>`
+  shows only `-` entries, or a path-scoped diff against the target is
+  empty), deinit its submodules first (`git -C <worktree> submodule
+  deinit -f --all`), then `git worktree remove --force <worktree>` — this
+  exact two-step sequence was reproduced end-to-end locally and succeeds.
 - **Self-removing your own worktree:** if the session's working directory
   IS the worktree being deleted, do the entire sequence (cd to the main
   repo root, worktree remove with the submodule-deinit fallback, branch
@@ -123,9 +125,15 @@ Two compounding traps:
 - **Squash SHA divergence.** Squash-merging A creates a *new* commit on
   main with a different SHA than A's original commits. B's branch (built on
   A's original commits) now looks like it has commits main doesn't
-  recognize, and won't merge cleanly. Rebase B before merging it: `git
+  recognize. Whether this produces an outright merge conflict or a silent
+  clean merge depends on content overlap — verified locally: if A and B
+  touch disjoint files, git's 3-way merge reconciles it without complaint;
+  if B continues editing something A also touched (the common case in a
+  real stack), it's a genuine `CONFLICT (content)`, not just a
+  bookkeeping nuisance. Either way, rebase B before merging it: `git
   rebase --onto origin/main A_BRANCH B_BRANCH` drops the now-redundant A
-  commits.
+  commits and was confirmed to turn a conflicting merge into a clean
+  fast-forward.
 
 Working order down a stack: retarget the next PR to `main` while it's still
 open → rebase its branch onto fresh `main` → force-push → merge the current
@@ -175,8 +183,12 @@ not safe from being swept into someone else's commit or reset away.
   listing can lag behind what's actually published.
 - **In a long-lived worktree, `origin/main` can advance underneath you.**
   `git diff origin/main..HEAD` then includes base-drift files you never
-  touched, which looks exactly like a stray inclusion. Use `git show
-  --numstat HEAD` (diff against HEAD's own parent) to see your true delta.
-  Before opening a PR, `git fetch origin main && git rebase origin/main`
-  and re-verify (build/tests) on the rebased tree — don't extrapolate from
-  a pre-rebase green run.
+  touched, which looks exactly like a stray inclusion. Verified locally: a
+  file added by someone else's merge to `origin/main` after your worktree
+  was created shows up in `git diff origin/main..HEAD` (as a deletion,
+  from your branch's point of view) purely from the base moving — you
+  never touched it. `git show --numstat HEAD` (diff against HEAD's own
+  parent) is unaffected by this and shows only your true delta. Before
+  opening a PR, `git fetch origin main && git rebase origin/main` and
+  re-verify (build/tests) on the rebased tree — don't extrapolate from a
+  pre-rebase green run.

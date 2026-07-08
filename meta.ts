@@ -31,6 +31,9 @@ export const skills: SkillMeta[] = [
   { name: 'orchestrate', kind: 'manual', source: 'in-tree', notes: 'Cross-repo and multiagent session setup with delegation checkpoints and structured worker-output intake.' },
   { name: 'tuple-wrapper-api-style', kind: 'manual', source: 'in-tree' },
   { name: 'pr-analysis', kind: 'manual', source: 'in-tree', notes: 'Strategic PR evaluation with concise default and full opt-in template.' },
+  { name: 'git-worktree-submodule-hygiene', kind: 'manual', source: 'in-tree', notes: 'Promoted from cross-project feedback memory: worktree/submodule lifecycle, gh pr merge/delete-branch pitfalls, stacked PR merges, concurrent-agent safety.' },
+  { name: 'gh-cli-markdown-quoting', kind: 'manual', source: 'in-tree', notes: 'Promoted from cross-project feedback memory: shell-quoting hazards for GitHub CLI Markdown bodies and search patterns.' },
+  { name: 'moonbit-gotchas', kind: 'manual', source: 'in-tree', notes: 'Promoted from cross-project feedback memory: silent-failure MoonBit compiler/formatter behaviors not covered by moonbit-refactoring or moonbit-deprecated-syntax.' },
 ]
 
 export const deferredLocalSkills = [

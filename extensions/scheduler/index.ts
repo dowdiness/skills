@@ -783,6 +783,7 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 	let results: StepResult[] = [];
 	let error: unknown;
 	let parentStat: string | undefined;
+	let execution: Promise<void> | undefined;
 
 	const execute = async (onProgress: ProgressCallback) => {
 		results = await runRoute(ctx.cwd, route, profile, controller.signal, onProgress);
@@ -800,12 +801,12 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 			};
 
 			requestRender = () => tui.requestRender();
-			execute((line) => {
+			execution = execute((line) => {
 				pushProgress(line);
 				requestRender();
 			}).then(() => finish(!controller.signal.aborted)).catch((caught) => {
 				error = caught;
-				finish(!controller.signal.aborted);
+				finish(true);
 			});
 
 			return {
@@ -830,6 +831,7 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 		});
 
 		if (!completed) {
+			await execution;
 			const summary: RouteRunSummary = { status: "aborted", results, patchPaths: collectPatchPaths(results), validationHints: validationHints(route, results, ctx.cwd, profile), parentStat };
 			pi.sendMessage({ customType: CUSTOM_TYPE, content: `# Scheduler aborted\n\nProfile: **${profile.displayName}**\n\nRoute: **${route.kind}**\n\nChild process termination was requested.`, display: true, details: { route, profile: profile.id } });
 			return summary;

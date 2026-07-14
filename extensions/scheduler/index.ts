@@ -13,6 +13,7 @@ import {
 import { Markdown, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { resolveRouteDefinition, resolveSchedulerProfile, routeFor, routeNames, type AutopilotMode, type RouteDefinition, type SchedulerMode, type SchedulerProfile, type ValidationCommandSpec } from "./profile.js";
 import { executeAgentProcess, executeRouteSteps, runValidationCommands } from "./engine.js";
+import { settleRouteUi } from "./ui-lifecycle.js";
 
 type RouteKind = string;
 type ClassifierRoute = RouteKind | "inline";
@@ -791,8 +792,7 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 	};
 
 	if (ctx.mode === "tui") {
-		let requestRender = () => {};
-		const completed = await ctx.ui.custom<boolean>((tui, theme, _keybindings, done) => {
+		const ui = ctx.ui.custom<boolean>((tui, theme, _keybindings, done) => {
 			let settled = false;
 			const finish = (value: boolean) => {
 				if (settled) return;
@@ -800,11 +800,12 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 				done(value);
 			};
 
-			requestRender = () => tui.requestRender();
+			const requestRender = () => tui.requestRender();
 			execution = execute((line) => {
 				pushProgress(line);
 				requestRender();
-			}).then(() => finish(!controller.signal.aborted)).catch((caught) => {
+			});
+			execution.then(() => finish(!controller.signal.aborted)).catch((caught) => {
 				error = caught;
 				finish(true);
 			});
@@ -829,9 +830,10 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 				},
 			};
 		});
-
+		const outcome = await settleRouteUi(ui, () => execution ?? Promise.resolve());
+		const completed = outcome.completed;
+		if (outcome.error !== undefined) error = outcome.error;
 		if (!completed) {
-			await execution;
 			const summary: RouteRunSummary = { status: "aborted", results, patchPaths: collectPatchPaths(results), validationHints: validationHints(route, results, ctx.cwd, profile), parentStat };
 			pi.sendMessage({ customType: CUSTOM_TYPE, content: `# Scheduler aborted\n\nProfile: **${profile.displayName}**\n\nRoute: **${route.kind}**\n\nChild process termination was requested.`, display: true, details: { route, profile: profile.id } });
 			return summary;

@@ -5,6 +5,16 @@ description: Use when reviewing a MoonBit/Canopy change or pull request before m
 
 # Parallel Pre-Merge Code Review
 
+This skill is supported for MoonBit/Canopy changes and pull requests. It is
+not a generic repository review workflow: every reviewer is specialized for
+MoonBit, Canopy package boundaries, or the Canopy validation toolchain.
+
+The review sends the parent-supplied target context, including the complete
+diff or relevant hunks, to the coordinator and all four reviewers. Use it only
+with repositories and model providers approved for that source code. The skill
+does not redact secrets or proprietary content.
+
+
 Dispatch one `parallel-reviewer` coordinator before merging a MoonBit/Canopy
 change. The coordinator runs four specialized, read-only reviewers in parallel
 and consolidates their reports.

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import {
 	type ExtensionAPI,
@@ -12,8 +13,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { resolveRouteDefinition, resolveSchedulerProfile, routeFor, routeNames, type AutopilotMode, type RouteDefinition, type SchedulerMode, type SchedulerProfile, type ValidationCommandSpec } from "./profile.js";
-import { executeAgentProcess, executeRouteSteps, runValidationCommands } from "./engine.js";
+import { executeAgentProcess, executeRouteSteps, isCompleteParallelReviewOutput, runValidationCommands } from "./engine.js";
 import { settleRouteUi } from "./ui-lifecycle.js";
+const SUBAGENT_EXTENSION = fileURLToPath(new URL("../subagent/index.ts", import.meta.url));
+const MAX_REVIEW_FILE_BYTES = 256 * 1024;
+const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
+const MAX_REVIEW_UNTRACKED_BYTES = 2 * 1024 * 1024;
 
 type RouteKind = string;
 type ClassifierRoute = RouteKind | "inline";
@@ -79,6 +84,7 @@ interface ExecResult {
 	code: number;
 	stdout: string;
 	stderr: string;
+	truncated?: boolean;
 }
 
 interface ValidationCommand extends ValidationCommandSpec {
@@ -285,13 +291,23 @@ async function execCapture(
 	command: string,
 	args: string[],
 	signal?: AbortSignal,
+	maxOutputBytes?: number,
 ): Promise<ExecResult> {
 	const { promise, resolve, reject } = Promise.withResolvers<ExecResult>();
 	const proc = spawn(command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 	let stdout = "";
 	let stderr = "";
+	let truncated = false;
 	let settled = false;
 	let killTimer: NodeJS.Timeout | undefined;
+	const append = (current: string, chunk: string) => {
+		if (maxOutputBytes === undefined) return current + chunk;
+		const remaining = maxOutputBytes - Buffer.byteLength(current);
+		const chunkBuffer = Buffer.from(chunk);
+		if (chunkBuffer.byteLength <= remaining) return current + chunk;
+		truncated = true;
+		return current + chunkBuffer.subarray(0, Math.max(0, remaining)).toString("utf8");
+	};
 	const cleanup = () => {
 		signal?.removeEventListener("abort", abort);
 		clearTimeout(killTimer);
@@ -317,21 +333,117 @@ async function execCapture(
 	};
 	if (signal?.aborted) abort();
 	else signal?.addEventListener("abort", abort, { once: true });
-	proc.stdout.on("data", (data) => { stdout += data.toString(); });
-	proc.stderr.on("data", (data) => { stderr += data.toString(); });
-	proc.on("close", (code) => settle({ code: code ?? 0, stdout, stderr }));
+	proc.stdout.on("data", (data) => { stdout = append(stdout, data.toString()); });
+	proc.stderr.on("data", (data) => { stderr = append(stderr, data.toString()); });
+	proc.on("close", (code) => settle({ code: code ?? 0, stdout, stderr, truncated: truncated || undefined }));
 	proc.on("error", fail);
 	return promise;
 }
 
-async function gitCapture(cwd: string, args: string[], signal?: AbortSignal): Promise<ExecResult> {
-	return execCapture(cwd, "git", args, signal);
+async function gitCapture(cwd: string, args: string[], signal?: AbortSignal, maxOutputBytes?: number): Promise<ExecResult> {
+	return execCapture(cwd, "git", args, signal, maxOutputBytes);
 }
 
 async function parentDiffStat(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
 	const result = await gitCapture(cwd, ["diff", "--stat"], signal).catch(() => undefined);
 	if (!result || result.code !== 0) return undefined;
 	return result.stdout.trim() || "(no parent working-tree diff)";
+}
+export async function writeReviewContext(cwd: string, signal?: AbortSignal): Promise<{ dir: string; filePath: string; truncated: boolean } | undefined> {
+	const root = await repoRoot(cwd, signal);
+	if (!root) return undefined;
+	const submoduleWarnings: string[] = [];
+	const submodulePaths = await getSubmodulePaths(root, signal);
+	for (const submodulePath of submodulePaths) {
+		const submoduleRoot = path.join(root, submodulePath);
+		if (!fs.existsSync(path.join(submoduleRoot, ".git"))) continue;
+		const status = await gitCapture(submoduleRoot, ["status", "--short"], signal).catch(() => undefined);
+		if (status?.stdout.trim()) submoduleWarnings.push(`- ${submodulePath}: dirty submodule changes omitted from this context`);
+	}
+	let baseRevision: string | undefined;
+	for (const candidate of ["origin/main", "main", "origin/master", "master"]) {
+		const result = await gitCapture(root, ["merge-base", "HEAD", candidate], signal).catch(() => undefined);
+		if (result?.code === 0 && result.stdout.trim()) {
+			baseRevision = result.stdout.trim();
+			break;
+		}
+	}
+	if (!baseRevision) {
+		const parent = await gitCapture(root, ["rev-parse", "--verify", "HEAD^"], signal).catch(() => undefined);
+		if (parent?.code === 0 && parent.stdout.trim()) baseRevision = parent.stdout.trim();
+	}
+	const diffArgs = baseRevision ? ["diff", baseRevision] : ["diff", "HEAD"];
+	const nameArgs = baseRevision ? ["diff", baseRevision, "--name-only"] : ["diff", "HEAD", "--name-only"];
+	const [changedResult, diff, untracked] = await Promise.all([
+		gitCapture(root, nameArgs, signal, MAX_REVIEW_DIFF_BYTES),
+		gitCapture(root, diffArgs, signal, MAX_REVIEW_DIFF_BYTES),
+		gitCapture(root, ["ls-files", "--others", "--exclude-standard", "-z"], signal, MAX_REVIEW_DIFF_BYTES),
+	]);
+	const changed = changedResult?.code === 0
+		? changedResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean)
+		: [];
+	for (const submodulePath of submodulePaths) {
+		if (changed.includes(submodulePath) && !submoduleWarnings.some((warning) => warning.includes(`- ${submodulePath}:`))) {
+			submoduleWarnings.push(`- ${submodulePath}: submodule commit changes omitted from this context`);
+		}
+	}
+	const untrackedPaths = untracked?.code === 0 ? untracked.stdout.split("\0").filter(Boolean) : [];
+	let contextTruncated = Boolean(changedResult?.truncated || diff?.truncated || untracked?.truncated || submoduleWarnings.length > 0);
+	let totalBytes = 0;
+	const untrackedSections: string[] = [];
+	for (const filePath of untrackedPaths) {
+		if (totalBytes >= MAX_REVIEW_UNTRACKED_BYTES) {
+			contextTruncated = true;
+			untrackedSections.push("## Untracked files omitted\n\n(context byte limit reached)");
+			break;
+		}
+		const absolutePath = path.join(root, filePath);
+		const stat = await fs.promises.lstat(absolutePath).catch(() => undefined);
+		if (!stat?.isFile()) {
+			contextTruncated = true;
+			untrackedSections.push(`## Untracked file: ${filePath}\n\n(omitted: not a regular file)`);
+			continue;
+		}
+		const remaining = Math.min(MAX_REVIEW_FILE_BYTES, MAX_REVIEW_UNTRACKED_BYTES - totalBytes);
+		const handle = await fs.promises.open(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW).catch(() => undefined);
+		if (!handle) {
+			contextTruncated = true;
+			untrackedSections.push(`## Untracked file: ${filePath}\n\n(omitted: unreadable file)`);
+			continue;
+		}
+		const buffer = Buffer.alloc(remaining + 1);
+		let bytesRead = 0;
+		try {
+			bytesRead = (await handle.read(buffer, 0, buffer.length, 0)).bytesRead;
+		} finally {
+			await handle.close().catch(() => undefined);
+		}
+		const truncated = bytesRead > remaining;
+		if (truncated) contextTruncated = true;
+		const content = buffer.subarray(0, Math.min(bytesRead, remaining)).toString("utf8");
+		totalBytes += Buffer.byteLength(content);
+		if (content.includes("\0")) {
+			contextTruncated = true;
+			untrackedSections.push(`## Untracked file: ${filePath}\n\n(omitted: binary file)`);
+		} else {
+			untrackedSections.push(`## Untracked file: ${filePath}${truncated ? " (truncated)" : ""}\n\n\`\`\`\n${content}\n\`\`\``);
+		}
+	}
+	const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-scheduler-review-"));
+	const filePath = path.join(dir, "review-context.md");
+	const diffText = diff?.stdout.trim() || "(no tracked diff)";
+	const completeness = contextTruncated ? "INCOMPLETE: one or more context captures were truncated or omitted" : "complete";
+	const sections = [
+		`# Scheduler review context\n\nPackage root: ${root}`,
+		`Base revision: ${baseRevision ?? "(unavailable; HEAD working-tree diff only)"}`,
+		submoduleWarnings.length > 0 ? `## Submodule changes\n\n${submoduleWarnings.join("\n")}` : undefined,
+		`## Changed files\n\n${Array.from(new Set([...changed, ...untrackedPaths])).sort().map((item) => `- ${item}`).join("\n") || "(none)"}`,
+		`Context completeness: ${completeness}`,
+		`## Tracked and committed diff\n\n\`\`\`diff\n${diffText}${diff?.truncated ? "\n\n[diff output truncated]" : ""}\n\`\`\``,
+		...untrackedSections,
+	];
+	await fs.promises.writeFile(filePath, sections.join("\n\n"), { encoding: "utf8", mode: 0o600 });
+	return { dir, filePath, truncated: contextTruncated };
 }
 
 async function repoRoot(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
@@ -489,12 +601,24 @@ async function runAgent(
 			output: "",
 		};
 	}
-	return executeAgentProcess(cwd, agent, task, signal, onProgress, {
+	const processAgent = {
+		...agent,
+		extensions: agentName === "parallel-reviewer" ? [SUBAGENT_EXTENSION] : undefined,
+	};
+	const result = await executeAgentProcess(cwd, processAgent, task, signal, onProgress, {
 		getInvocation: getPiInvocation,
 		writePrompt,
 		summarizeMessage,
 		getFinalOutput,
 	});
+	if (agentName !== "parallel-reviewer") return result;
+	const complete = isCompleteParallelReviewOutput(result.output);
+	if (complete) return result;
+	return {
+		...result,
+		exitCode: result.exitCode === 0 ? 1 : result.exitCode,
+		errorMessage: result.errorMessage ?? "parallel-reviewer did not return usable reports from all four reviewers.",
+	};
 }
 
 async function runAgentInWorktree(
@@ -613,23 +737,25 @@ async function runRoute(cwd: string, route: RouteDecision, profile: SchedulerPro
 	}
 
 	let previousPatchApplied = false;
+	const reviewContextDirs: string[] = [];
+	let reviewContextIncomplete = false;
 	const getReviewContext = async () => {
-		const [root, changedPaths, diffStat] = await Promise.all([
-			repoRoot(cwd).catch(() => undefined),
-			currentChangedPaths(cwd).catch(() => []),
-			parentDiffStat(cwd).catch(() => undefined),
-		]);
+		const context = await writeReviewContext(cwd, signal);
+		if (context) reviewContextDirs.push(context.dir);
+		if (!context || context.truncated) reviewContextIncomplete = true;
+		const root = await repoRoot(cwd).catch(() => undefined);
 		return [
 			root ? `Package root: ${root}` : "Package root: (unavailable)",
 			"Applicable validation: inspect the package instructions and report recommended commands; do not claim commands were executed unless their output is supplied.",
 			"Known risks: verify the complete diff, public API/package boundaries, generated files, tests, and stale references.",
-			changedPaths.length > 0 ? `Changed files:\n${changedPaths.map((filePath) => `- ${filePath}`).join("\n")}` : "Changed files: (none)",
-			diffStat ? `Current diff stat:\n\n${diffStat}` : "Current diff stat: (unavailable)",
-			"Actual diff/hunks: supplied by the scheduler parent context when available.",
+			context ? `Complete review context file: ${context.filePath}` : "Complete review context file: (unavailable)",
+			"Read the context file before reviewing; it contains the committed branch diff, staged and unstaged changes, and untracked regular-file contents.",
 		].join("\n\n");
 	};
 
-	const executionResults = await executeRouteSteps<StepResult>(routeDefinition.steps, route.task, signal, {
+	let executionResults: StepResult[];
+	try {
+		executionResults = await executeRouteSteps<StepResult>(routeDefinition.steps, route.task, signal, {
 		onProgress,
 		getReviewContext,
 		makeAbortedResult: (step, task) => ({
@@ -668,6 +794,20 @@ async function runRoute(cwd: string, route: RouteDecision, profile: SchedulerPro
 			? runAgentInWorktree(cwd, agents, step.agent, task, profile, signal, onProgress)
 			: runAgent(cwd, agents, step.agent, task, signal, onProgress),
 	});
+	} finally {
+		await Promise.all(reviewContextDirs.map((dir) => fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)));
+	}
+	if (reviewContextIncomplete && route.kind === "parallel-review") {
+		executionResults.push({
+			agent: "scheduler",
+			task: route.task,
+			exitCode: 1,
+			messages: [],
+			stderr: "",
+			output: "",
+			errorMessage: "Parallel review context was incomplete; reviewer results cannot be treated as merge-ready.",
+		});
+	}
 	results.push(...executionResults);
 
 	if (previousPatchApplied) onProgress?.("scheduler: profile post-step pipeline completed");

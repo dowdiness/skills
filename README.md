@@ -30,14 +30,23 @@ pi install git:github.com/dowdiness/skills
 pi list
 ```
 
-Direct `pi install` does not install `agents/*.md`; run the repository helper
-before using `parallel-review`.
+Direct `pi install` and Agent Skills-only installation do not install
+`agents/*.md`; use the repository helper before using `parallel-review`.
+The skill is supported for MoonBit/Canopy repositories only.
+
+Before running a review, confirm that the configured model providers are
+approved for the repository. The parent supplies the complete diff or relevant
+hunks to the coordinator, which passes that context to all four reviewers. The
+skill does not redact secrets or proprietary content.
 
 Install skills only with the Agent Skills CLI:
 
 ```bash
 pnpx skills add dowdiness/skills --skill='*'
 ```
+
+Skill-only installation still requires the repository helper (or manual
+installation of the five agent definitions) before `parallel-review` can run.
 
 ## What's included
 
@@ -59,19 +68,21 @@ npm run sync-extensions-status
 
 For local symlink installation, cleanup, and migration details, see [`scripts/README.md`](scripts/README.md).
 
-## Profile-driven scheduler
+## Canopy scheduler integration
 
-Profiles are selected in this order: repository `.scheduler.json` or `scheduler.config.json` (`{"profile":"generic"}` or `{"profile":"canopy"}`), Canopy repository markers, then the generic fallback.
-
-Profiles define route vocabulary, agent steps, classifier instructions, generated-file policy, validation rules, and cautious-autopilot limits. A non-Canopy repository can opt in without changing the extension:
+The scheduler integration is supported for Canopy repositories. It selects the
+Canopy profile from repository markers or explicit Canopy configuration and
+provides the `parallel-review` route:
 
 ```text
 /scheduler on
-/scheduler review inspect the current diff
-/scheduler implement add a focused parser test
+/scheduler parallel-review inspect the current diff
 ```
 
-The `parallel-review` route remains available in Canopy profiles and delegates to the packaged coordinator plus its four specialized reviewer agents.
+The packaged coordinator and four specialized reviewer agents are required.
+The generic profile implementation remains internal and is not a supported
+third-party workflow. Its standalone design, agent provisioning, provider
+configuration, and validation coverage are tracked in [issue #7](https://github.com/dowdiness/skills/issues/7).
 
 ## Source of truth
 

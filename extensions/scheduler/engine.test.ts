@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { RouteStep } from "./profile.js";
-import { executeAgentProcess, executeRouteSteps, runValidationCommands } from "./engine.js";
+import { executeAgentProcess, executeRouteSteps, isCompleteParallelReviewOutput, runValidationCommands } from "./engine.js";
 
 const agent = {
 	name: "test-agent",
@@ -56,6 +56,41 @@ test("parses agent message events and returns the final output", async () => {
 	expect(result.exitCode).toBe(0);
 	expect(result.messages).toHaveLength(1);
 	expect(result.output).toBe("1 messages");
+});
+test("passes explicit child extensions while disabling discovery", async () => {
+	let invocationArgs: string[] = [];
+	const result = await executeAgentProcess(".", { ...agent, extensions: ["/tmp/subagent.js"] }, "inspect", undefined, undefined, {
+		getInvocation: (args) => {
+			invocationArgs = args;
+			return nodeInvocation("process.stdout.write('done')");
+		},
+		writePrompt: async () => ({ dir: "/tmp", filePath: "/tmp/unused" }),
+		summarizeMessage: () => undefined,
+		getFinalOutput: () => "",
+	});
+	expect(result.exitCode).toBe(0);
+	expect(invocationArgs).toContain("--no-extensions");
+	expect(invocationArgs).toContain("--extension");
+	expect(invocationArgs).toContain("/tmp/subagent.js");
+});
+test("requires usable reports from all four parallel reviewers", () => {
+	const complete = [
+		"moonbit-reviewer: usable report received",
+		"reviewer-flash: usable report received",
+		"reviewer-mimo: usable report received",
+		"reviewer-qwen: usable report received",
+	].join("\n");
+	expect(isCompleteParallelReviewOutput(complete)).toBe(true);
+	expect(isCompleteParallelReviewOutput(complete.replace("reviewer-mimo", "missing"))).toBe(false);
+	expect(isCompleteParallelReviewOutput(`${complete}\nINCOMPLETE REVIEW`)).toBe(false);
+	const markdownStatuses = [
+		"- `moonbit-reviewer`: usable report received",
+		"- `reviewer-flash`: usable report received",
+		"- `reviewer-mimo`: usable report received",
+		"- `reviewer-qwen`: usable report received",
+	].join("\n");
+	expect(isCompleteParallelReviewOutput(markdownStatuses)).toBe(true);
+	expect(isCompleteParallelReviewOutput(complete.replace("reviewer-mimo: usable report received", "reviewer-mimo: did not provide a usable report"))).toBe(false);
 });
 test("removes the abort listener after an agent exits", async () => {
 	let removed = 0;

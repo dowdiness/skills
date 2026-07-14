@@ -53,7 +53,17 @@ export interface AgentProcessSpec {
 	name: string;
 	model?: string;
 	tools?: string[];
+	extensions?: string[];
 	systemPrompt: string;
+}
+export function isCompleteParallelReviewOutput(output: string): boolean {
+	if (/INCOMPLETE REVIEW|failed-or-missing/i.test(output)) return false;
+	const lines = output.split(/\r?\n/);
+	return ["moonbit-reviewer", "reviewer-flash", "reviewer-mimo", "reviewer-qwen"]
+		.every((name) => {
+			const status = new RegExp("[`\"']?" + name + "[`\"']?\\s*[:=]\\s*[`\"']?usable report received[`\"']?(?=$|[\\s,}])", "i");
+			return lines.some((line) => status.test(line));
+		});
 }
 
 export interface AgentProcessResult extends RouteExecutionResult {
@@ -90,6 +100,9 @@ export async function executeAgentProcess(
 	dependencies: AgentProcessDependencies,
 ): Promise<AgentProcessResult> {
 	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions"];
+	if (agent.extensions && agent.extensions.length > 0) {
+		for (const extension of agent.extensions) args.push("--extension", extension);
+	}
 	if (agent.model) args.push("--model", agent.model);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 	let tmpDir: string | undefined;

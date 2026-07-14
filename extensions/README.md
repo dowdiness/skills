@@ -6,21 +6,28 @@ pi extensions that add tools and commands to the coding agent. Extensions are Ty
 
 | Extension | Origin | Purpose |
 |---|---|---|
-| `canopy-scheduler` | manual | Routes high-confidence Canopy tasks to subagents and records scheduler patch/validation state. |
+| `scheduler` | manual | Profile-driven task routing, validation, patch management, and cautious autopilot. |
 | `subagent` | manual | Registers the subagent delegation tool with user/project agent discovery and fallback handling. |
 
-## canopy-scheduler
+## scheduler
 
-Routes high-confidence Canopy tasks to specialized subagents (scout, planner, worker, reviewer, moonbit-scout, moonbit-planner, moonbit-reviewer).
+The scheduler integration is supported for Canopy repositories. Canopy
+repository markers select MoonBit-aware routes, including
+`/scheduler parallel-review`.
+
+The generic profile implementation remains internal and is not a supported
+third-party workflow. Its agent provisioning, provider configuration, and
+validation coverage are tracked in [issue #7](https://github.com/dowdiness/skills/issues/7).
 
 Features:
-- Automatic task classification and routing
+- Canopy task classification and routing
 - Scheduler patch management and validation
 - Worktree-based isolation for editing routes
-- Autopilot modes for high-confidence routes
+- Cautious autopilot for high-confidence routes
 
 Configuration via pi commands:
 - `/scheduler on|off` - enable/disable routing
+- `/scheduler parallel-review <request>` - run the Canopy parallel review route
 - `/scheduler autopilot off|cautious|status` - control autopilot behavior
 - `/scheduler validate [current|patch]` - package-aware validation
 - `/scheduler last` - show latest route record

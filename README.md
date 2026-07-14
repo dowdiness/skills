@@ -4,29 +4,40 @@ Agent skills and pi extensions for MoonBit work, project-specific coding pattern
 
 This repo is both:
 
-- a skill collection (`skills/*/SKILL.md`)
 - a pi package (`package.json` → `pi.skills` and `pi.extensions`)
+- an agent-definition bundle (`agents/*.md`, linked by the package install helper)
 
 ## Install
 
-Install the full pi package:
+Install the full bundle, including `parallel-review`'s coordinator and
+reviewer agents, from a checkout:
 
 ```bash
-pi install git:github.com/dowdiness/skills
-pi list
-pi --offline --no-session --no-tools -p "respond ok"
-```
-
-If you already have local copies of these skills or extensions, use the conflict-safe helper from a checkout:
-
-```bash
-git clone --recursive https://github.com/dowdiness/skills.git
+git clone https://github.com/dowdiness/skills.git
 cd skills
 npm run install-pi-package
 ```
 
-The helper backs up colliding local resources, installs the package, and keeps compatibility symlinks for hosts that still read `~/.agents/skills`.
-See [`scripts/README.md`](scripts/README.md#pi-package-install-helper).
+The helper backs up colliding local skills, agents, and extensions, installs the
+package, and keeps compatibility symlinks for hosts that still read
+`~/.agents/skills`. Run `pi --offline --no-session --no-tools -p "respond ok"`
+after installation to smoke-test startup.
+
+For skills and extensions only, the package can also be installed directly:
+
+```bash
+pi install git:github.com/dowdiness/skills
+pi list
+```
+
+Direct `pi install` and Agent Skills-only installation do not install
+`agents/*.md`; use the repository helper before using `parallel-review`.
+The skill is supported for MoonBit/Canopy repositories only.
+
+Before running a review, confirm that the configured model providers are
+approved for the repository. The parent supplies the complete diff or relevant
+hunks to the coordinator, which passes that context to all four reviewers. The
+skill does not redact secrets or proprietary content.
 
 Install skills only with the Agent Skills CLI:
 
@@ -34,10 +45,14 @@ Install skills only with the Agent Skills CLI:
 pnpx skills add dowdiness/skills --skill='*'
 ```
 
+Skill-only installation still requires the repository helper (or manual
+installation of the five agent definitions) before `parallel-review` can run.
+
 ## What's included
 
 - [`skills/`](skills/) — MoonBit, incr, loom, handoff, orchestration, and API-style skills.
-- [`extensions/`](extensions/) — pi extensions for subagent delegation and Canopy scheduling.
+- [`agents/`](agents/) — the `parallel-reviewer` coordinator and four specialized reviewer definitions.
+- [`extensions/`](extensions/) — profile-driven scheduler and subagent delegation pi extensions.
 - [`scripts/`](scripts/) — validation, local install, cleanup, and vendor-sync helpers.
 - [`vendor/`](vendor/) — submodule sources for vendored skills.
 - [`sources/`](sources/) — notes for generated or historical source material.
@@ -53,8 +68,24 @@ npm run sync-extensions-status
 
 For local symlink installation, cleanup, and migration details, see [`scripts/README.md`](scripts/README.md).
 
+## Canopy scheduler integration
+
+The scheduler integration is supported for Canopy repositories. It selects the
+Canopy profile from repository markers or explicit Canopy configuration and
+provides the `parallel-review` route:
+
+```text
+/scheduler on
+/scheduler parallel-review inspect the current diff
+```
+
+The packaged coordinator and four specialized reviewer agents are required.
+The generic profile implementation remains internal and is not a supported
+third-party workflow. Its standalone design, agent provisioning, provider
+configuration, and validation coverage are tracked in [issue #7](https://github.com/dowdiness/skills/issues/7).
+
 ## Source of truth
 
-`meta.ts` is the catalog for skill and extension ownership.
+`meta.ts` is the catalog for skill, agent, and extension ownership.
 
 For vendored content, update the upstream/source repo first, then sync this repo. Do not let copied outputs in `skills/` or `extensions/` drift silently.

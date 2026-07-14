@@ -32,6 +32,7 @@ export const skills: SkillMeta[] = [
   { name: 'tuple-wrapper-api-style', kind: 'manual', source: 'in-tree' },
   { name: 'pr-analysis', kind: 'manual', source: 'in-tree', notes: 'Strategic PR evaluation with concise default and full opt-in template.' },
   { name: 'git-worktree-submodule-hygiene', kind: 'manual', source: 'in-tree', notes: 'Promoted from cross-project feedback memory: worktree/submodule lifecycle, gh pr merge/delete-branch pitfalls, stacked PR merges, concurrent-agent safety.' },
+  { name: 'parallel-review', kind: 'manual', source: 'in-tree', notes: 'Parallel MoonBit/Canopy review skill; install the packaged coordinator and four reviewer agents with the repository install helper.' },
   { name: 'gh-cli-markdown-quoting', kind: 'manual', source: 'in-tree', notes: 'Promoted from cross-project feedback memory: shell-quoting hazards for GitHub CLI Markdown bodies and search patterns.' },
   { name: 'moonbit-gotchas', kind: 'manual', source: 'in-tree', notes: 'Promoted from cross-project feedback memory: silent-failure MoonBit compiler/formatter behaviors not covered by moonbit-refactoring or moonbit-deprecated-syntax.' },
 ]
@@ -57,6 +58,21 @@ export const deferredLocalSkills = [
   'shape',
   'typeset',
 ]
+export interface AgentMeta {
+  name: string
+  kind: SkillKind
+  source: string
+  notes?: string
+}
+
+export const agents: AgentMeta[] = [
+  { name: 'parallel-reviewer', kind: 'manual', source: 'in-tree', notes: 'Coordinator for the parallel-review skill.' },
+  { name: 'moonbit-reviewer', kind: 'manual', source: 'in-tree', notes: 'MoonBit correctness and package-boundary reviewer.' },
+  { name: 'reviewer-flash', kind: 'manual', source: 'in-tree', notes: 'Correctness and edge-case reviewer.' },
+  { name: 'reviewer-mimo', kind: 'manual', source: 'in-tree', notes: 'Readability and idiomatic-code reviewer.' },
+  { name: 'reviewer-qwen', kind: 'manual', source: 'in-tree', notes: 'API-surface and boundary reviewer.' },
+]
+
 
 export type ExtensionKind = SkillKind
 
@@ -71,7 +87,7 @@ export interface ExtensionMeta {
 }
 
 export const extensions: ExtensionMeta[] = [
-  { name: 'canopy-scheduler', kind: 'manual', source: 'local-pi', outputPath: 'extensions/canopy-scheduler', notes: 'Routes high-confidence Canopy tasks to subagents and records scheduler patch/validation state.' },
+  { name: 'scheduler', kind: 'manual', source: 'local-pi', outputPath: 'extensions/scheduler', notes: 'Profile-driven scheduler that routes repository tasks to subagents and records validation state.' },
   { name: 'subagent', kind: 'manual', source: 'local-pi', outputPath: 'extensions/subagent', notes: 'Registers the subagent delegation tool with user/project agent discovery and fallback handling.' },
 ]
 

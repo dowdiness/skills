@@ -11,12 +11,19 @@ npm run validate
 Checks:
 - Each skill in `skills/` has `SKILL.md` with matching frontmatter `name` and `description`.
 - Each extension in `extensions/` has a default export function.
+- Each packaged agent in `agents/` has valid `name` and `description` frontmatter.
 - Every directory in `skills/` and `extensions/` is listed in `meta.ts`, and vice versa.
 - Vendored skills and extensions show no drift from their submodule sources.
 
+## Scheduler profiles
+
+The packaged `extensions/scheduler/` extension selects a profile from repository markers. Canopy markers enable the Canopy profile; all other repositories use the generic profile and remain disabled until `/scheduler on` is issued.
+
+Profile selection checks `.scheduler.json` or `scheduler.config.json` first (`{"profile":"generic"}` or `{"profile":"canopy"}`), then repository markers, and finally uses the generic fallback.
+
 ## Install / Uninstall / Cleanup (local symlink)
 
-Symlink this checkout's skills and extensions into the agent auto-discovery directories (`~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, `~/.pi/agent/extensions`).
+Symlink this checkout's skills, agent definitions, and extensions into the agent auto-discovery directories (`~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, `~/.pi/agent/agents`, `~/.pi/agent/extensions`).
 
 ```bash
 npm run install-local                # skip correct links, block conflicts
@@ -45,10 +52,15 @@ npm run install-pi-package
 
 Runs `pi install git:github.com/dowdiness/skills` without duplicate resource warnings:
 
-1. backs up local skills/extensions that would collide,
+1. backs up local skills, agent definitions, and extensions that would collide,
 2. installs or updates the pi package,
 3. disables this package's pi skill resources in `settings.json`, and
-4. recreates `~/.agents`, `~/.claude`, and `~/.codex` skill symlinks to the installed package.
+4. recreates skill compatibility symlinks and `~/.pi/agent/agents` links to the installed package.
+
+The plain `pi install` command installs the package's declared skills and
+extensions, but agent definitions are installed by this helper because pi
+packages do not declare an `agents` resource directory. Run this helper before
+using `parallel-review`.
 
 That keeps package-managed extensions active while preserving compatibility with hosts that still discover skills from `~/.agents/skills`. Backups go to `~/.pi/agent/dowdiness-skills-local-backup-<timestamp>/`.
 

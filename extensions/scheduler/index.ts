@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import {
 	type ExtensionAPI,
@@ -11,22 +12,15 @@ import {
 	parseFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { resolveRouteDefinition, resolveSchedulerProfile, routeFor, routeNames, type AutopilotMode, type RouteDefinition, type SchedulerMode, type SchedulerProfile, type ValidationCommandSpec } from "./profile.js";
+import { executeAgentProcess, executeRouteSteps, isCompleteParallelReviewOutput, runValidationCommands } from "./engine.js";
+import { settleRouteUi } from "./ui-lifecycle.js";
+const SUBAGENT_EXTENSION = fileURLToPath(new URL("../subagent/index.ts", import.meta.url));
+const MAX_REVIEW_FILE_BYTES = 256 * 1024;
+const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
+const MAX_REVIEW_UNTRACKED_BYTES = 2 * 1024 * 1024;
 
-type RouteKind =
-	| "mechanic"
-	| "scout"
-	| "moonbit-scout"
-	| "plan"
-	| "moonbit-plan"
-	| "review"
-	| "moonbit-review"
-	| "ensemble-review"
-	| "parallel-review"
-	| "review-router"
-	| "implement"
-	| "worker";
-type SchedulerMode = "auto" | "off";
-type AutopilotMode = "off" | "cautious";
+type RouteKind = string;
 type ClassifierRoute = RouteKind | "inline";
 type ProgressCallback = (line: string) => void;
 
@@ -52,6 +46,7 @@ interface StepResult {
 	isolated?: boolean;
 	worktreeRoot?: string;
 	patchPath?: string;
+	appliedToParent?: boolean;
 	patchPaths?: string[];
 	diffStat?: string;
 	worktreeStatus?: string;
@@ -89,12 +84,10 @@ interface ExecResult {
 	code: number;
 	stdout: string;
 	stderr: string;
+	truncated?: boolean;
 }
 
-interface ValidationCommand {
-	label: string;
-	command: string;
-	args: string[];
+interface ValidationCommand extends ValidationCommandSpec {
 	cwd: string;
 }
 
@@ -106,7 +99,6 @@ interface ValidationCommandResult extends ValidationCommand {
 
 interface ValidationPlan {
 	affectedPaths: string[];
-	packageDirs: string[];
 	commands: ValidationCommand[];
 	warnings: string[];
 }
@@ -124,28 +116,19 @@ interface RouteRunSummary {
 	validationHints: string[];
 	parentStat?: string;
 }
-
-const CUSTOM_TYPE = "canopy-scheduler";
-const STATE_TYPE = "canopy-scheduler-state";
-const ROUTE_RECORD_TYPE = "canopy-scheduler-route";
-const PATCH_DIR = path.join(getAgentDir(), "scheduler-patches");
-const GENERATED_BLOCK_PATTERNS = [
-	/^_build\//,
-	/(^|\/)node_modules\//,
-	/(^|\/)coverage\//,
-	/(^|\/)dist\//,
-	/(^|\/)\.next\//,
-];
-const GENERATED_WARN_PATTERNS = [/\.mbti$/, /(^|\/)generated\//, /\.generated\./];
-const CLASSIFIER_MODEL = "openai-codex/gpt-5.3-codex-spark:minimal";
-const CLASSIFIER_THRESHOLD = 0.72;
-const AUTOPILOT_MAX_FILES = 3;
-const AUTOPILOT_MAX_CHANGED_LINES = 100;
-
-function isCanopyCwd(cwd: string): boolean {
-	const normalized = cwd.replace(/\\/g, "/");
-	return normalized.endsWith("/dowdiness/canopy") || normalized.includes("/dowdiness/canopy/");
+function parseJsonRecord(text: string): Record<string, unknown> | undefined {
+	try {
+		const value: unknown = JSON.parse(text);
+		return typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
+	} catch {
+		return undefined;
+	}
 }
+
+const CUSTOM_TYPE = "scheduler";
+const STATE_TYPE = "scheduler-state";
+const ROUTE_RECORD_TYPE = "scheduler-route";
+const PATCH_DIR = path.join(getAgentDir(), "scheduler-patches");
 
 function stripPrefix(text: string, prefix: string): string | undefined {
 	const pattern = new RegExp(`^${prefix}\\s*:\\s*`, "i");
@@ -169,87 +152,44 @@ function looksScoped(text: string): boolean {
 	return /`[^`]+`/.test(text) || /\b[a-zA-Z0-9_./-]+\.(mbt|ts|tsx|js|json|md|css|html|yml|yaml)\b/.test(text);
 }
 
-function classify(text: string): RouteDecision | undefined {
+function classify(text: string, profile: SchedulerProfile): RouteDecision | undefined {
 	const trimmed = text.trim();
 	if (!trimmed) return undefined;
 
-	const explicitRoutes: Array<[RouteKind, string, string]> = [
-		["mechanic", "mechanic", "explicit mechanic prefix"],
-		["moonbit-scout", "moonbit-scout", "explicit moonbit-scout prefix"],
-		["moonbit-plan", "moonbit-plan", "explicit moonbit-plan prefix"],
-		["moonbit-review", "moonbit-review", "explicit moonbit-review prefix"],
-		["scout", "scout", "explicit scout prefix"],
-		["plan", "plan", "explicit plan prefix"],
-		["review", "review", "explicit review prefix"],
-		["ensemble-review", "ensemble-review", "explicit ensemble-review prefix"],
-		["parallel-review", "parallel-review", "explicit parallel-review prefix"],
-		["review-router", "review-router", "explicit review-router prefix"],
-		["implement", "implement", "explicit implement prefix"],
-		["worker", "worker", "explicit worker prefix"],
-	];
-
-	for (const [kind, prefix, reason] of explicitRoutes) {
-		const task = stripPrefix(trimmed, prefix);
-		if (task) return { kind, task, reason, explicit: true };
+	for (const route of profile.routes) {
+		for (const prefix of route.aliases) {
+			const task = stripPrefix(trimmed, prefix);
+			if (task) return { kind: route.name, task, reason: `explicit ${prefix} prefix`, explicit: true };
+		}
 	}
 
 	const lower = trimmed.toLowerCase();
-
-	if (looksMechanical(trimmed) && looksScoped(trimmed)) {
+	const has = (name: string) => routeFor(profile, name) !== undefined;
+	if (looksMechanical(trimmed) && looksScoped(trimmed) && has("mechanic")) {
 		return { kind: "mechanic", task: trimmed, reason: "high-confidence mechanical scoped edit", explicit: false };
 	}
-
-	if (/^(find|locate|where\s+(is|are)|investigate|explore|trace|map)\b/.test(lower)) {
+	if (/^(find|locate|where\s+(is|are)|investigate|explore|trace|map)\b/.test(lower) && has("scout")) {
 		return { kind: "scout", task: trimmed, reason: "code reconnaissance request", explicit: false };
 	}
-
 	if (/^(plan|design|propose)\b/.test(lower) || /\bimplementation plan\b/.test(lower)) {
-		return { kind: "plan", task: trimmed, reason: "planning request", explicit: false };
+		if (has("plan")) return { kind: "plan", task: trimmed, reason: "planning request", explicit: false };
 	}
-
-	if (/\bensemble[- ]?review\b/.test(lower) || /\bensemble[- ]?reviewer\b/.test(lower)) {
+	if (/\bensemble[- ]?review\b/.test(lower) && has("ensemble-review")) {
 		return { kind: "ensemble-review", task: trimmed, reason: "ensemble review request", explicit: false };
 	}
-	if (/\bparallel[- ]?review\b/.test(lower) || /\bparallel[- ]?reviewer\b/.test(lower) || /\bmultiple (cheap )?reviewers?\b/.test(lower)) {
+	if (/\bparallel[- ]?review\b/.test(lower) && has("parallel-review")) {
 		return { kind: "parallel-review", task: trimmed, reason: "parallel review request", explicit: false };
 	}
-	if (/\breview[- ]?router\b/.test(lower)) {
+	if (/\breview[- ]?router\b/.test(lower) && has("review-router")) {
 		return { kind: "review-router", task: trimmed, reason: "review router request", explicit: false };
 	}
-	if (/^(review|audit)\b/.test(lower) || /\b(pre-merge|premerge|code review)\b/.test(lower)) {
+	if ((/^(review|audit)\b/.test(lower) || /\b(pre-merge|premerge|code review)\b/.test(lower)) && has("review")) {
 		return { kind: "review", task: trimmed, reason: "review request", explicit: false };
 	}
-
-	if (/^(implement|add|fix|refactor)\b/.test(lower) && /\b(across|multiple files|end-to-end|delegate|scheduler)\b/.test(lower)) {
+	if (/^(implement|add|fix|refactor)\b/.test(lower) && /\b(across|multiple files|end-to-end|delegate|scheduler)\b/.test(lower) && has("implement")) {
 		return { kind: "implement", task: trimmed, reason: "larger implementation request", explicit: false };
 	}
-
 	return undefined;
-}
-
-function isEditingRoute(kind: RouteKind): boolean {
-	return kind === "mechanic" || kind === "worker" || kind === "implement";
-}
-
-function looksMoonBitTask(text: string): boolean {
-	const lower = text.toLowerCase();
-	return (
-		/\.mbt\b|\.mbti\b|moonbit|moon\.pkg|moon\.mod\.json|moon\.work/.test(lower) ||
-		/\b(moon check|moon test|moon info|moon fmt|moon prove|moon ide)\b/.test(lower) ||
-		/\b(pub struct|trait bound|package root|module root|existing api first|parser|lowering|projection)\b/.test(lower)
-	);
-}
-
-async function routeUsesMoonBit(cwd: string, task: string): Promise<boolean> {
-	if (looksMoonBitTask(task)) return true;
-	const changedPaths = await currentChangedPaths(cwd).catch(() => []);
-	return changedPaths.some((filePath) =>
-		filePath.endsWith(".mbt") ||
-		filePath.endsWith(".mbti") ||
-		filePath.endsWith("moon.pkg") ||
-		filePath.endsWith("moon.mod.json") ||
-		filePath.endsWith("moon.work"),
-	);
 }
 
 function expandUserPath(input: string, cwd: string): string {
@@ -346,57 +286,164 @@ async function writePrompt(agentName: string, prompt: string): Promise<{ dir: st
 	return { dir: tmpDir, filePath };
 }
 
-async function execCapture(
+export async function execCapture(
 	cwd: string,
 	command: string,
 	args: string[],
 	signal?: AbortSignal,
+	maxOutputBytes?: number,
 ): Promise<ExecResult> {
-	return new Promise((resolve, reject) => {
-		const proc = spawn(command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
-		let stdout = "";
-		let stderr = "";
-		let settled = false;
-
-		const settle = (result: ExecResult) => {
-			if (settled) return;
-			settled = true;
-			resolve(result);
-		};
-
-		const abort = () => {
-			proc.kill("SIGTERM");
-			setTimeout(() => {
-				if (!settled) proc.kill("SIGKILL");
-			}, 2500).unref?.();
-		};
-
-		if (signal?.aborted) abort();
-		else signal?.addEventListener("abort", abort, { once: true });
-
-		proc.stdout.on("data", (data) => {
-			stdout += data.toString();
-		});
-		proc.stderr.on("data", (data) => {
-			stderr += data.toString();
-		});
-		proc.on("close", (code) => settle({ code: code ?? 0, stdout, stderr }));
-		proc.on("error", (error) => {
-			if (settled) return;
-			settled = true;
-			reject(error);
-		});
-	});
+	const { promise, resolve, reject } = Promise.withResolvers<ExecResult>();
+	const proc = spawn(command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+	let stdout = "";
+	let stderr = "";
+	let truncated = false;
+	let settled = false;
+	let killTimer: NodeJS.Timeout | undefined;
+	const append = (current: string, chunk: string) => {
+		if (maxOutputBytes === undefined) return current + chunk;
+		const remaining = maxOutputBytes - Buffer.byteLength(current);
+		const chunkBuffer = Buffer.from(chunk);
+		if (chunkBuffer.byteLength <= remaining) return current + chunk;
+		truncated = true;
+		return current + chunkBuffer.subarray(0, Math.max(0, remaining)).toString("utf8");
+	};
+	const cleanup = () => {
+		signal?.removeEventListener("abort", abort);
+		clearTimeout(killTimer);
+	};
+	const settle = (result: ExecResult) => {
+		if (settled) return;
+		settled = true;
+		cleanup();
+		resolve(result);
+	};
+	const fail = (error: Error) => {
+		if (settled) return;
+		settled = true;
+		cleanup();
+		reject(error);
+	};
+	const abort = () => {
+		proc.kill("SIGTERM");
+		killTimer = setTimeout(() => {
+			if (!settled) proc.kill("SIGKILL");
+		}, 2500);
+		killTimer.unref?.();
+	};
+	if (signal?.aborted) abort();
+	else signal?.addEventListener("abort", abort, { once: true });
+	proc.stdout.on("data", (data) => { stdout = append(stdout, data.toString()); });
+	proc.stderr.on("data", (data) => { stderr = append(stderr, data.toString()); });
+	proc.on("close", (code, signalName) => settle({ code: code ?? (signalName ? 1 : 0), stdout, stderr, truncated: truncated || undefined }));
+	proc.on("error", fail);
+	return promise;
 }
 
-async function gitCapture(cwd: string, args: string[], signal?: AbortSignal): Promise<ExecResult> {
-	return execCapture(cwd, "git", args, signal);
+async function gitCapture(cwd: string, args: string[], signal?: AbortSignal, maxOutputBytes?: number): Promise<ExecResult> {
+	return execCapture(cwd, "git", args, signal, maxOutputBytes);
 }
 
 async function parentDiffStat(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
 	const result = await gitCapture(cwd, ["diff", "--stat"], signal).catch(() => undefined);
 	if (!result || result.code !== 0) return undefined;
 	return result.stdout.trim() || "(no parent working-tree diff)";
+}
+export async function writeReviewContext(cwd: string, signal?: AbortSignal): Promise<{ dir: string; filePath: string; truncated: boolean } | undefined> {
+	const root = await repoRoot(cwd, signal);
+	if (!root) return undefined;
+	const submoduleWarnings: string[] = [];
+	const submodulePaths = await getSubmodulePaths(root, signal);
+	for (const submodulePath of submodulePaths) {
+		const submoduleRoot = path.join(root, submodulePath);
+		if (!fs.existsSync(path.join(submoduleRoot, ".git"))) continue;
+		const status = await gitCapture(submoduleRoot, ["status", "--short"], signal).catch(() => undefined);
+		if (status?.stdout.trim()) submoduleWarnings.push(`- ${submodulePath}: dirty submodule changes omitted from this context`);
+	}
+	let baseRevision: string | undefined;
+	for (const candidate of ["origin/main", "main", "origin/master", "master"]) {
+		const result = await gitCapture(root, ["merge-base", "HEAD", candidate], signal).catch(() => undefined);
+		if (result?.code === 0 && result.stdout.trim()) {
+			baseRevision = result.stdout.trim();
+			break;
+		}
+	}
+	if (!baseRevision) {
+		const parent = await gitCapture(root, ["rev-parse", "--verify", "HEAD^"], signal).catch(() => undefined);
+		if (parent?.code === 0 && parent.stdout.trim()) baseRevision = parent.stdout.trim();
+	}
+	const diffArgs = baseRevision ? ["diff", baseRevision] : ["diff", "HEAD"];
+	const nameArgs = baseRevision ? ["diff", baseRevision, "--name-only"] : ["diff", "HEAD", "--name-only"];
+	const [changedResult, diff, untracked] = await Promise.all([
+		gitCapture(root, nameArgs, signal, MAX_REVIEW_DIFF_BYTES),
+		gitCapture(root, diffArgs, signal, MAX_REVIEW_DIFF_BYTES),
+		gitCapture(root, ["ls-files", "--others", "--exclude-standard", "-z"], signal, MAX_REVIEW_DIFF_BYTES),
+	]);
+	const changed = changedResult?.code === 0
+		? changedResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean)
+		: [];
+	for (const submodulePath of submodulePaths) {
+		if (changed.includes(submodulePath) && !submoduleWarnings.some((warning) => warning.includes(`- ${submodulePath}:`))) {
+			submoduleWarnings.push(`- ${submodulePath}: submodule commit changes omitted from this context`);
+		}
+	}
+	const untrackedPaths = untracked?.code === 0 ? untracked.stdout.split("\0").filter(Boolean) : [];
+	let contextTruncated = Boolean(changedResult?.truncated || diff?.truncated || untracked?.truncated || submoduleWarnings.length > 0);
+	let totalBytes = 0;
+	const untrackedSections: string[] = [];
+	for (const filePath of untrackedPaths) {
+		if (totalBytes >= MAX_REVIEW_UNTRACKED_BYTES) {
+			contextTruncated = true;
+			untrackedSections.push("## Untracked files omitted\n\n(context byte limit reached)");
+			break;
+		}
+		const absolutePath = path.join(root, filePath);
+		const stat = await fs.promises.lstat(absolutePath).catch(() => undefined);
+		if (!stat?.isFile()) {
+			contextTruncated = true;
+			untrackedSections.push(`## Untracked file: ${filePath}\n\n(omitted: not a regular file)`);
+			continue;
+		}
+		const remaining = Math.min(MAX_REVIEW_FILE_BYTES, MAX_REVIEW_UNTRACKED_BYTES - totalBytes);
+		const handle = await fs.promises.open(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW).catch(() => undefined);
+		if (!handle) {
+			contextTruncated = true;
+			untrackedSections.push(`## Untracked file: ${filePath}\n\n(omitted: unreadable file)`);
+			continue;
+		}
+		const buffer = Buffer.alloc(remaining + 1);
+		let bytesRead = 0;
+		try {
+			bytesRead = (await handle.read(buffer, 0, buffer.length, 0)).bytesRead;
+		} finally {
+			await handle.close().catch(() => undefined);
+		}
+		const truncated = bytesRead > remaining;
+		if (truncated) contextTruncated = true;
+		const content = buffer.subarray(0, Math.min(bytesRead, remaining)).toString("utf8");
+		totalBytes += Buffer.byteLength(content);
+		if (content.includes("\0")) {
+			contextTruncated = true;
+			untrackedSections.push(`## Untracked file: ${filePath}\n\n(omitted: binary file)`);
+		} else {
+			untrackedSections.push(`## Untracked file: ${filePath}${truncated ? " (truncated)" : ""}\n\n\`\`\`\n${content}\n\`\`\``);
+		}
+	}
+	const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-scheduler-review-"));
+	const filePath = path.join(dir, "review-context.md");
+	const diffText = diff?.stdout.trim() || "(no tracked diff)";
+	const completeness = contextTruncated ? "INCOMPLETE: one or more context captures were truncated or omitted" : "complete";
+	const sections = [
+		`# Scheduler review context\n\nPackage root: ${root}`,
+		`Base revision: ${baseRevision ?? "(unavailable; HEAD working-tree diff only)"}`,
+		submoduleWarnings.length > 0 ? `## Submodule changes\n\n${submoduleWarnings.join("\n")}` : undefined,
+		`## Changed files\n\n${Array.from(new Set([...changed, ...untrackedPaths])).sort().map((item) => `- ${item}`).join("\n") || "(none)"}`,
+		`Context completeness: ${completeness}`,
+		`## Tracked and committed diff\n\n\`\`\`diff\n${diffText}${diff?.truncated ? "\n\n[diff output truncated]" : ""}\n\`\`\``,
+		...untrackedSections,
+	];
+	await fs.promises.writeFile(filePath, sections.join("\n\n"), { encoding: "utf8", mode: 0o600 });
+	return { dir, filePath, truncated: contextTruncated };
 }
 
 async function repoRoot(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
@@ -420,64 +467,13 @@ function pathTouchesSubmodule(filePath: string, submodulePaths: string[]): boole
 	return submodulePaths.some((submodule) => filePath === submodule || filePath.startsWith(`${submodule}/`));
 }
 
-function assessGeneratedPaths(paths: string[]): { blocked: string[]; warnings: string[] } {
-	const blocked = paths.filter((filePath) => GENERATED_BLOCK_PATTERNS.some((pattern) => pattern.test(filePath)));
-	const warningPaths = paths.filter((filePath) => GENERATED_WARN_PATTERNS.some((pattern) => pattern.test(filePath)));
+function assessGeneratedPaths(paths: string[], profile: SchedulerProfile): { blocked: string[]; warnings: string[] } {
+	const blocked = paths.filter((filePath) => profile.generated.block.some((source) => new RegExp(source).test(filePath)));
+	const warningPaths = paths.filter((filePath) => profile.generated.warn.some((source) => new RegExp(source).test(filePath)));
 	const warnings = warningPaths.map((filePath) => `${filePath} looks generated; prefer regenerating it in the parent checkout when possible.`);
 	return { blocked, warnings };
 }
 
-function findRepoRootSync(cwd: string): string {
-	let current = cwd;
-	while (true) {
-		if (fs.existsSync(path.join(current, ".git"))) return current;
-		const parent = path.dirname(current);
-		if (parent === current) return cwd;
-		current = parent;
-	}
-}
-
-function findMoonPackageDirs(cwd: string, affectedPaths: string[]): string[] {
-	const root = findRepoRootSync(cwd);
-	const packageDirs = new Set<string>();
-	for (const affectedPath of affectedPaths) {
-		if (!affectedPath.endsWith(".mbt") && !affectedPath.endsWith("moon.pkg")) continue;
-		let current = path.dirname(path.join(root, affectedPath));
-		if (affectedPath.endsWith("moon.pkg")) current = path.join(root, path.dirname(affectedPath));
-		while (current.startsWith(root)) {
-			if (fs.existsSync(path.join(current, "moon.pkg"))) {
-				const relative = path.relative(root, current) || ".";
-				packageDirs.add(relative);
-				break;
-			}
-			const parent = path.dirname(current);
-			if (parent === current) break;
-			current = parent;
-		}
-	}
-	return Array.from(packageDirs).sort();
-}
-
-function findMoonModuleRoots(cwd: string, affectedPaths: string[]): string[] {
-	const root = findRepoRootSync(cwd);
-	const moduleRoots = new Set<string>();
-	for (const affectedPath of affectedPaths) {
-		let current = path.dirname(path.join(root, affectedPath));
-		if (affectedPath.endsWith("moon.mod.json") || affectedPath.endsWith("moon.work")) current = path.dirname(path.join(root, affectedPath));
-		while (current.startsWith(root)) {
-			if (fs.existsSync(path.join(current, "moon.mod.json"))) {
-				const relative = path.relative(root, current) || ".";
-				moduleRoots.add(relative);
-				break;
-			}
-			const parent = path.dirname(current);
-			if (parent === current) break;
-			current = parent;
-		}
-	}
-	if (moduleRoots.size === 0 && fs.existsSync(path.join(root, "moon.mod.json"))) moduleRoots.add(".");
-	return Array.from(moduleRoots).sort();
-}
 
 function extractPatchPathsFromText(diff: string): string[] {
 	const paths = new Set<string>();
@@ -507,76 +503,64 @@ async function isParentTreeClean(cwd: string, signal?: AbortSignal): Promise<boo
 	return Boolean(status && status.code === 0 && status.stdout.trim().length === 0);
 }
 
-async function runPromptNoTools(cwd: string, prompt: string, signal?: AbortSignal): Promise<string> {
-	const args = [
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-		"--no-extensions",
-		"--no-tools",
-		"--model",
-		CLASSIFIER_MODEL,
-		prompt,
-	];
+async function runPromptNoTools(cwd: string, prompt: string, profile: SchedulerProfile, signal?: AbortSignal): Promise<string> {
+	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-tools", "--model", profile.classifier.model, prompt];
 	let output = "";
-	await new Promise<void>((resolve) => {
-		const invocation = getPiInvocation(args);
-		const proc = spawn(invocation.command, invocation.args, {
-			cwd,
-			shell: false,
-			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env, PI_SCHEDULER_CHILD: "1" },
-		});
-		let buffer = "";
-		let settled = false;
-		const finish = () => {
-			if (settled) return;
-			settled = true;
-			resolve();
-		};
-		const abort = () => {
-			proc.kill("SIGTERM");
-			setTimeout(() => {
-				if (!settled) proc.kill("SIGKILL");
-			}, 2500).unref?.();
-		};
-		if (signal?.aborted) abort();
-		else signal?.addEventListener("abort", abort, { once: true });
-		const processLine = (line: string) => {
-			if (!line.trim()) return;
-			let event: any;
-			try {
-				event = JSON.parse(line);
-			} catch {
-				return;
-			}
-			if (event.type === "message_end" && event.message) output = getFinalOutput([event.message as Message]);
-		};
-		proc.stdout.on("data", (data) => {
-			buffer += data.toString();
-			const lines = buffer.split("\n");
-			buffer = lines.pop() || "";
-			for (const line of lines) processLine(line);
-		});
-		proc.on("close", () => {
-			if (buffer.trim()) processLine(buffer);
-			finish();
-		});
-		proc.on("error", finish);
+	const { promise, resolve } = Promise.withResolvers<void>();
+	const invocation = getPiInvocation(args);
+	const proc = spawn(invocation.command, invocation.args, {
+		cwd,
+		shell: false,
+		stdio: ["ignore", "pipe", "pipe"],
+		env: { ...process.env, PI_SCHEDULER_CHILD: "1" },
 	});
+	let buffer = "";
+	let settled = false;
+	let killTimer: NodeJS.Timeout | undefined;
+	const finish = () => {
+		if (settled) return;
+		settled = true;
+		signal?.removeEventListener("abort", abort);
+		clearTimeout(killTimer);
+		resolve();
+	};
+	const abort = () => {
+		proc.kill("SIGTERM");
+		killTimer = setTimeout(() => { if (!settled) proc.kill("SIGKILL"); }, 2500);
+		killTimer.unref?.();
+	};
+	if (signal?.aborted) abort();
+	else signal?.addEventListener("abort", abort, { once: true });
+	const processLine = (line: string) => {
+		if (!line.trim()) return;
+		const event = parseJsonRecord(line);
+		if (!event) return;
+		if (event.type === "message_end" && event.message) output = getFinalOutput([event.message as Message]);
+	};
+	proc.stdout.on("data", (data) => {
+		buffer += data.toString();
+		const lines = buffer.split("\n");
+		buffer = lines.pop() || "";
+		for (const line of lines) processLine(line);
+	});
+	proc.on("close", () => {
+		if (buffer.trim()) processLine(buffer);
+		finish();
+	});
+	proc.on("error", finish);
+	await promise;
 	return output;
 }
 
-function parseClassifierJson(output: string): ClassifierDecision | undefined {
+function parseClassifierJson(output: string, profile: SchedulerProfile): ClassifierDecision | undefined {
 	const stripped = output.replace(/```(?:json)?/g, "```").replace(/```/g, "");
 	const match = stripped.match(/\{[\s\S]*\}/);
 	if (!match) return undefined;
 	try {
-		const parsed = JSON.parse(match[0]) as { route?: unknown; confidence?: unknown; reason?: unknown };
+		const parsed = JSON.parse(match[0]) as ClassifierDecision;
 		if (typeof parsed.route !== "string") return undefined;
 		const route = parsed.route as ClassifierRoute;
-		if (!["inline", "mechanic", "scout", "moonbit-scout", "plan", "moonbit-plan", "review", "moonbit-review", "ensemble-review", "parallel-review", "review-router", "implement", "worker"].includes(route)) return undefined;
+		if (route !== "inline" && routeFor(profile, route) === undefined) return undefined;
 		const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0;
 		const reason = typeof parsed.reason === "string" ? parsed.reason : "classifier";
 		return { route, confidence, reason };
@@ -585,30 +569,17 @@ function parseClassifierJson(output: string): ClassifierDecision | undefined {
 	}
 }
 
-async function classifyWithCheapModel(cwd: string, text: string, signal?: AbortSignal): Promise<ClassifierDecision | undefined> {
+async function classifyWithCheapModel(cwd: string, text: string, profile: SchedulerProfile, signal?: AbortSignal): Promise<ClassifierDecision | undefined> {
 	const prompt = [
 		"Classify this coding-agent user request for a hard task scheduler.",
 		"Return only compact JSON with keys route, confidence, reason.",
 		"Routes:",
-		"- inline: small judgment-heavy task or unclear request",
-		"- mechanic: tightly scoped rote edit/rename/import/path migration with exact files/patterns",
-		"- scout: broad non-MoonBit codebase reconnaissance only",
-		"- moonbit-scout: MoonBit/Canopy reconnaissance involving .mbt, moon.pkg, moon.mod.json, .mbti, moon ide, package boundaries, parser/lowering/projection code",
-		"- plan: non-MoonBit planning/design request without implementation",
-		"- moonbit-plan: MoonBit/Canopy planning/design request without implementation",
-		"- review: non-MoonBit code review/audit request",
-		"- moonbit-review: MoonBit/Canopy code review/audit request",
-		"- ensemble-review: quick multi-model review using three cheap reviewers",
-		"- parallel-review: thorough pre-merge review using four specialized reviewers",
-		"- review-router: let the router choose between ensemble-review and parallel-review",
-		"- implement: larger implementation needing scout then plan then worker",
-		"- worker: explicit implementation by worker only",
-		"Prefer inline unless confidence is high. Do not route UI/visual iteration.",
+		...profile.classifier.instructions.map((instruction) => `- ${instruction}`),
 		"",
 		`Request: ${text}`,
 	].join("\n");
-	const output = await runPromptNoTools(cwd, prompt, signal);
-	return parseClassifierJson(output);
+	const output = await runPromptNoTools(cwd, prompt, profile, signal);
+	return parseClassifierJson(output, profile);
 }
 
 async function runAgent(
@@ -630,123 +601,24 @@ async function runAgent(
 			output: "",
 		};
 	}
-
-	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions"];
-	if (agent.model) args.push("--model", agent.model);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
-
-	let tmpDir: string | undefined;
-	let tmpPrompt: string | undefined;
-	if (agent.systemPrompt.trim()) {
-		const tmp = await writePrompt(agent.name, agent.systemPrompt);
-		tmpDir = tmp.dir;
-		tmpPrompt = tmp.filePath;
-		args.push("--append-system-prompt", tmpPrompt);
-	}
-	args.push(`Task: ${task}`);
-
-	const messages: Message[] = [];
-	let stderr = "";
-	let stopReason: string | undefined;
-	let errorMessage: string | undefined;
-	let model: string | undefined = agent.model;
-
-	try {
-		onProgress?.(`${agent.name}: starting`);
-		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
-			const proc = spawn(invocation.command, invocation.args, {
-				cwd,
-				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
-				env: { ...process.env, PI_SCHEDULER_CHILD: "1" },
-			});
-
-			let buffer = "";
-			let wasAborted = false;
-			let settled = false;
-			const abort = () => {
-				wasAborted = true;
-				onProgress?.(`${agent.name}: abort requested`);
-				proc.kill("SIGTERM");
-				setTimeout(() => {
-					if (!settled) proc.kill("SIGKILL");
-				}, 5000).unref?.();
-			};
-
-			if (signal?.aborted) abort();
-			else signal?.addEventListener("abort", abort, { once: true });
-
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				let event: any;
-				try {
-					event = JSON.parse(line);
-				} catch {
-					return;
-				}
-
-				if (event.type === "tool_execution_start") onProgress?.(`${agent.name}: → ${event.toolName ?? "tool"}`);
-
-				if (event.type === "message_end" && event.message) {
-					const msg = event.message as Message;
-					messages.push(msg);
-					const summary = summarizeMessage(msg);
-					if (summary) onProgress?.(`${agent.name}: ${summary}`);
-					if (msg.role === "assistant") {
-						if (msg.model) model = msg.model;
-						if (msg.stopReason) stopReason = msg.stopReason;
-						if (msg.errorMessage) errorMessage = msg.errorMessage;
-					}
-				}
-				if (event.type === "tool_result_end" && event.message) {
-					messages.push(event.message as Message);
-					onProgress?.(`${agent.name}: tool result`);
-				}
-			};
-
-			proc.stdout.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
-			});
-
-			proc.stderr.on("data", (data) => {
-				stderr += data.toString();
-			});
-
-			proc.on("close", (code) => {
-				settled = true;
-				if (buffer.trim()) processLine(buffer);
-				resolve(wasAborted ? 130 : (code ?? 0));
-			});
-			proc.on("error", () => {
-				settled = true;
-				resolve(1);
-			});
-		});
-
-		if (signal?.aborted) {
-			return {
-				agent: agent.name,
-				task,
-				exitCode: 130,
-				messages,
-				stderr,
-				output: getFinalOutput(messages),
-				model,
-				stopReason: "aborted",
-				errorMessage: "Scheduler route aborted",
-			};
-		}
-
-		onProgress?.(`${agent.name}: finished with exit ${exitCode}`);
-		return { agent: agent.name, task, exitCode, messages, stderr, output: getFinalOutput(messages), model, stopReason, errorMessage };
-	} finally {
-		if (tmpPrompt) await fs.promises.unlink(tmpPrompt).catch(() => undefined);
-		if (tmpDir) await fs.promises.rmdir(tmpDir).catch(() => undefined);
-	}
+	const processAgent = {
+		...agent,
+		extensions: agentName === "parallel-reviewer" ? [SUBAGENT_EXTENSION] : undefined,
+	};
+	const result = await executeAgentProcess(cwd, processAgent, task, signal, onProgress, {
+		getInvocation: getPiInvocation,
+		writePrompt,
+		summarizeMessage,
+		getFinalOutput,
+	});
+	if (agentName !== "parallel-reviewer") return result;
+	const complete = isCompleteParallelReviewOutput(result.output);
+	if (complete) return result;
+	return {
+		...result,
+		exitCode: result.exitCode === 0 ? 1 : result.exitCode,
+		errorMessage: result.errorMessage ?? "parallel-reviewer did not return usable reports from all four reviewers.",
+	};
 }
 
 async function runAgentInWorktree(
@@ -754,6 +626,7 @@ async function runAgentInWorktree(
 	agents: AgentConfig[],
 	agentName: string,
 	task: string,
+	profile: SchedulerProfile,
 	signal?: AbortSignal,
 	onProgress?: ProgressCallback,
 ): Promise<StepResult> {
@@ -813,7 +686,7 @@ async function runAgentInWorktree(
 		if (touchedSubmodules.length > 0) {
 			result.submoduleWarning = `Patch touches submodule path(s): ${touchedSubmodules.join(", ")}. Review submodule workflow before applying.`;
 		}
-		const generated = assessGeneratedPaths(result.patchPaths);
+		const generated = assessGeneratedPaths(result.patchPaths, profile);
 		if (generated.warnings.length > 0) {
 			result.generatedWarning = generated.warnings.join(" ");
 		}
@@ -842,133 +715,102 @@ async function runAgentInWorktree(
 		}
 		return result;
 	} finally {
-		if (fs.existsSync(worktreeRoot)) await gitCapture(repoRoot, ["worktree", "remove", "--force", worktreeRoot], signal).catch(() => undefined);
+		if (fs.existsSync(worktreeRoot)) await gitCapture(repoRoot, ["worktree", "remove", "--force", worktreeRoot]).catch(() => undefined);
 		await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
 	}
 }
 
-async function runRoute(cwd: string, route: RouteDecision, signal?: AbortSignal, onProgress?: ProgressCallback): Promise<StepResult[]> {
+async function runRoute(cwd: string, route: RouteDecision, profile: SchedulerProfile, signal?: AbortSignal, onProgress?: ProgressCallback): Promise<StepResult[]> {
 	const agents = loadAgents();
 	const results: StepResult[] = [];
-	let previous = "";
+	const changedPaths = await currentChangedPaths(cwd).catch(() => []);
+	const routeDefinition = resolveRouteDefinition(profile, route.kind, route.task, route.explicit, changedPaths);
+	if (!routeDefinition) {
+		return [{
+			agent: "scheduler",
+			task: route.task,
+			exitCode: 1,
+			messages: [],
+			stderr: `Unknown route ${route.kind}. Available: ${routeNames(profile).join(", ")}`,
+			output: "",
+		}];
+	}
 
-	const runStep = async (agent: string, taskTemplate: string, isolate = false) => {
-		if (signal?.aborted) {
-			const aborted: StepResult = { agent, task: taskTemplate, exitCode: 130, messages: [], stderr: "", output: "", stopReason: "aborted", errorMessage: "Scheduler route aborted before this step started" };
-			results.push(aborted);
-			return aborted;
-		}
-
-		const task = taskTemplate.replace(/\{previous\}/g, () => previous);
-		onProgress?.(`${agent}: queued${isolate ? " in isolated worktree" : ""}`);
-		const result = isolate
-			? await runAgentInWorktree(cwd, agents, agent, task, signal, onProgress)
-			: await runAgent(cwd, agents, agent, task, signal, onProgress);
-		results.push(result);
-		previous = result.output || result.stderr || result.errorMessage || "";
-		return result;
-	};
-
-	const useMoonBit = await routeUsesMoonBit(cwd, route.task);
-	const scoutAgent = route.kind === "scout" && route.explicit ? "scout" : useMoonBit ? "moonbit-scout" : "scout";
-	const plannerAgent = route.kind === "plan" && route.explicit ? "planner" : useMoonBit ? "moonbit-planner" : "planner";
-	const reviewerAgent = route.kind === "review" && route.explicit ? "reviewer" : useMoonBit ? "moonbit-reviewer" : "reviewer";
-	const reviewContext = async () => {
-		const [changedPaths, diffStat] = await Promise.all([
-			currentChangedPaths(cwd).catch(() => []),
-			parentDiffStat(cwd).catch(() => undefined),
-		]);
+	let previousPatchApplied = false;
+	const reviewContextDirs: string[] = [];
+	let reviewContextIncomplete = false;
+	const getReviewContext = async () => {
+		const context = await writeReviewContext(cwd, signal);
+		if (context) reviewContextDirs.push(context.dir);
+		if (!context || context.truncated) reviewContextIncomplete = true;
+		const root = await repoRoot(cwd).catch(() => undefined);
 		return [
-			"Patch path: (not applicable; review routes inspect the current working tree)",
-			changedPaths.length > 0 ? `Changed files:\n${changedPaths.map((filePath) => `- ${filePath}`).join("\n")}` : "Changed files: (none)",
-			diffStat ? `Current diff stat:\n\n${diffStat}` : "Current diff stat: (unavailable)",
+			root ? `Package root: ${root}` : "Package root: (unavailable)",
+			"Applicable validation: inspect the package instructions and report recommended commands; do not claim commands were executed unless their output is supplied.",
+			"Known risks: verify the complete diff, public API/package boundaries, generated files, tests, and stale references.",
+			context ? `Complete review context file: ${context.filePath}` : "Complete review context file: (unavailable)",
+			"Read the context file before reviewing; it contains the committed branch diff, staged and unstaged changes, and untracked regular-file contents.",
 		].join("\n\n");
 	};
 
-	switch (route.kind) {
-		case "mechanic":
-			await runStep("mechanic", route.task, true);
-			break;
-		case "scout":
-			await runStep(scoutAgent, route.task);
-			break;
-		case "moonbit-scout":
-			await runStep("moonbit-scout", route.task);
-			break;
-		case "review": {
-			const context = await reviewContext();
-			await runStep(reviewerAgent, `${route.task}\n\nReview context:\n${context}`);
-			break;
-		}
-		case "moonbit-review": {
-			const context = await reviewContext();
-			await runStep("moonbit-reviewer", `${route.task}\n\nReview context:\n${context}`);
-			break;
-		}
-		case "ensemble-review": {
-			const context = await reviewContext();
-			await runStep("ensemble-reviewer", `${route.task}\n\nReview context:\n${context}`);
-			break;
-		}
-		case "parallel-review": {
-			const context = await reviewContext();
-			await runStep("parallel-reviewer", `${route.task}\n\nReview context:\n${context}`);
-			break;
-		}
-		case "review-router": {
-			const context = await reviewContext();
-			await runStep("review-router", `${route.task}\n\nReview context:\n${context}`);
-			break;
-		}
-		case "worker":
-			await runStep("worker", route.task, true);
-			break;
-		case "plan":
-			await runStep(scoutAgent, `Find code relevant to this planning request:\n\n${route.task}`);
-			if (results[results.length - 1].exitCode === 0) await runStep(plannerAgent, `Create an implementation plan for this request:\n\n${route.task}\n\nScout context:\n{previous}`);
-			break;
-		case "moonbit-plan":
-			await runStep("moonbit-scout", `Find MoonBit/Canopy code relevant to this planning request:\n\n${route.task}`);
-			if (results[results.length - 1].exitCode === 0) await runStep("moonbit-planner", `Create a MoonBit/Canopy implementation plan for this request:\n\n${route.task}\n\nScout context:\n{previous}`);
-			break;
-		case "implement":
-			await runStep(scoutAgent, `Find code relevant to this implementation request:\n\n${route.task}`);
-			if (results[results.length - 1].exitCode === 0) await runStep(plannerAgent, `Create an implementation plan for this request:\n\n${route.task}\n\nScout context:\n{previous}`);
-			if (results[results.length - 1].exitCode === 0) {
-				await runStep("worker", `Implement this request in the isolated worktree using the plan/context below.\n\nOriginal request:\n${route.task}\n\nPlan/context:\n{previous}`, true);
+	let executionResults: StepResult[];
+	try {
+		executionResults = await executeRouteSteps<StepResult>(routeDefinition.steps, route.task, signal, {
+		onProgress,
+		getReviewContext,
+		makeAbortedResult: (step, task) => ({
+			agent: step.agent,
+			task,
+			exitCode: 130,
+			messages: [],
+			stderr: "",
+			output: "",
+			stopReason: "aborted",
+			errorMessage: "Scheduler route aborted before this step started",
+		}),
+		prepareStep: async (step, stepResults) => {
+			if (!step.applyPreviousPatch) return true;
+			const previousResult = stepResults[stepResults.length - 1];
+			if (!previousResult?.patchPath || previousResult.applyCheckExitCode !== 0) {
+				onProgress?.(`${step.agent}: skipped because the previous step produced no applicable patch`);
+				return false;
 			}
-			if (useMoonBit && results[results.length - 1].exitCode === 0) {
-				const workerResult = results[results.length - 1];
-				let workerPatchApplied = false;
-				if (!workerResult.patchPath) {
-					onProgress?.("moonbit-refactor: skipped because worker produced no patch");
-				} else if (workerResult.applyCheckExitCode !== 0) {
-					onProgress?.("moonbit-refactor: skipped because worker patch is not cleanly applicable to parent");
-				} else {
-					const parentStatus = await gitCapture(cwd, ["status", "--short"], signal).catch(() => undefined);
-					if (parentStatus?.stdout.trim()) {
-						onProgress?.("moonbit-refactor: skipped because parent working tree has uncommitted changes");
-					} else {
-						const apply = await gitCapture(cwd, ["apply", workerResult.patchPath], signal).catch((error) => ({ code: 1, stdout: "", stderr: String(error) }));
-						workerPatchApplied = apply.code === 0;
-						if (workerPatchApplied) workerResult.patchPath = undefined;
-						onProgress?.(workerPatchApplied ? "moonbit-refactor: applied worker patch to parent checkout" : "moonbit-refactor: skipped because applying worker patch failed");
-					}
-				}
-				if (workerPatchApplied) {
-					await runStep("moonbit-refactor", `Read the full moonbit-refactoring skill at ~/.agents/skills/moonbit-refactoring/SKILL.md, then apply its guidelines to the files that were just changed. Run moon check and affected moon test commands to validate.\n\nOriginal request:\n${route.task}\n\nPrevious step output (includes Files Changed):\n{previous}`);
-				}
-				if (workerPatchApplied && results[results.length - 1].exitCode === 0) {
-					const context = await reviewContext();
-					await runStep("ensemble-reviewer", `Review the full implementation including refactoring. Focus on MoonBit correctness, Existing API First, package boundaries, .mbti drift, and validation readiness.\n\nOriginal request:\n${route.task}\n\n${context}\n\nPrevious step output:\n{previous}`);
-				}
-				if (workerPatchApplied && results[results.length - 1].exitCode === 0) {
-					await runStep("worker", `Address only high-confidence actionable findings from the ensemble review. If the review has no Critical/Warnings/actionable findings, do not edit files; report that no follow-up changes were needed. Re-read the affected files before editing, preserve the intended behavior, keep the fix minimal, and run the lightest relevant validation. Include ## Files Changed with exact paths.\n\nOriginal request:\n${route.task}\n\nEnsemble review output:\n{previous}`);
-				}
+			const parentStatus = await gitCapture(cwd, ["status", "--short"], signal).catch(() => undefined);
+			if (parentStatus?.stdout.trim()) {
+				onProgress?.(`${step.agent}: skipped because parent working tree has uncommitted changes`);
+				return false;
 			}
-			break;
+			const apply = await gitCapture(cwd, ["apply", previousResult.patchPath], signal).catch((error) => ({ code: 1, stdout: "", stderr: String(error) }));
+			if (apply.code !== 0) {
+				stepResults.push({ agent: step.agent, task: step.task ?? route.task, exitCode: 1, messages: [], stderr: apply.stderr || apply.stdout, output: "", errorMessage: "Previous worker patch could not be applied to the parent checkout." });
+				return false;
+			}
+			previousResult.appliedToParent = true;
+			previousPatchApplied = true;
+			onProgress?.(`${step.agent}: previous worker patch applied to parent checkout`);
+			return true;
+		},
+		runStep: async (step, task) => step.isolate
+			? runAgentInWorktree(cwd, agents, step.agent, task, profile, signal, onProgress)
+			: runAgent(cwd, agents, step.agent, task, signal, onProgress),
+	});
+	} finally {
+		await Promise.all(reviewContextDirs.map((dir) => fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)));
 	}
+	if (reviewContextIncomplete && route.kind === "parallel-review") {
+		executionResults.push({
+			agent: "scheduler",
+			task: route.task,
+			exitCode: 1,
+			messages: [],
+			stderr: "",
+			output: "",
+			errorMessage: "Parallel review context was incomplete; reviewer results cannot be treated as merge-ready.",
+		});
+	}
+	results.push(...executionResults);
 
+	if (previousPatchApplied) onProgress?.("scheduler: profile post-step pipeline completed");
 	return results;
 }
 
@@ -980,36 +822,35 @@ function collectAffectedPaths(results: StepResult[]): string[] {
 	return Array.from(new Set(results.flatMap((result) => result.patchPaths ?? []))).sort();
 }
 
-function validationHints(route: RouteDecision, results: StepResult[], cwd: string): string[] {
-	if (!isEditingRoute(route.kind)) return [];
+function validationHints(route: RouteDecision, results: StepResult[], cwd: string, profile: SchedulerProfile): string[] {
+	if (!profile.isEditingRoute(route.kind)) return [];
 	const patchPaths = collectPatchPaths(results);
 	const affected = collectAffectedPaths(results);
-	const packageDirs = findMoonPackageDirs(cwd, affected);
+	const appliedToParent = results.some((result) => result.appliedToParent);
 	const hints = new Set<string>();
-	if (patchPaths.length > 0) hints.add(`Preview/apply with /scheduler apply ${patchPaths[patchPaths.length - 1]}`);
-	hints.add("Inspect git diff --stat after applying the patch.");
-	if (affected.some((filePath) => filePath.endsWith(".mbt") || filePath.endsWith("moon.pkg") || filePath.endsWith("moon.mod.json") || filePath.endsWith("moon.work"))) {
-		hints.add("Run moon check.");
-		if (affected.some((filePath) => filePath.endsWith("moon.mod.json") || filePath.endsWith("moon.work")) || packageDirs.length === 0 || packageDirs.length > 4) {
-			hints.add("Run moon test at the workspace root.");
-		} else {
-			hints.add(`Run moon test in affected package dir(s): ${packageDirs.join(", ")}.`);
+	if (patchPaths.length > 0) {
+		hints.add(appliedToParent
+			? `Patch already applied to the parent checkout: ${patchPaths[patchPaths.length - 1]}`
+			: `Preview/apply with /scheduler apply ${patchPaths[patchPaths.length - 1]}`);
+	}
+	hints.add(appliedToParent ? "Inspect the parent checkout diff and run validation." : "Inspect git diff --stat after applying the patch.");
+	for (const rule of profile.validation.rules) {
+		if (affected.some((filePath) => rule.pathPatterns.some((source) => new RegExp(source).test(filePath)))) {
+			for (const hint of rule.hints) hints.add(hint);
 		}
-		hints.add("Run moon fmt && moon info before committing; inspect .mbti diffs for unintended API changes.");
 	}
-	if (affected.some((filePath) => /(^|\/)examples\/(web|demo-react|prosemirror|canvas\/web)\//.test(filePath) || /\.(ts|tsx|css|html)$/.test(filePath))) {
-		hints.add("If web/TS is affected, run moon build --target js and the relevant npm typecheck/e2e command from CI.");
+	if (affected.length > 0 && !profile.validation.rules.some((rule) => affected.some((filePath) => rule.pathPatterns.some((source) => new RegExp(source).test(filePath))))) {
+		hints.add(profile.validation.fallbackHint);
 	}
-	if (affected.some((filePath) => filePath.startsWith("docs/") && filePath.endsWith(".md"))) hints.add("Review docs for drift; docs-only patches may not require moon test.");
 	if (results.some((result) => result.generatedWarning)) hints.add("Patch touches generated-looking files; prefer regenerating artifacts in the parent checkout when possible.");
 	if (results.some((result) => result.submoduleWarning)) hints.add("For submodule changes, commit and push inside the submodule before updating the parent pointer.");
 	return Array.from(hints);
 }
 
-function formatResults(route: RouteDecision, results: StepResult[], hints: string[], parentStat?: string): string {
+function formatResults(route: RouteDecision, results: StepResult[], hints: string[], profile: SchedulerProfile, parentStat?: string): string {
 	const failed = results.find((result) => result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted");
 	const status = failed ? "failed" : "completed";
-	const sections = [`# Scheduler ${status}`, `Route: **${route.kind}** (${route.reason})`, `Task: ${route.task}`];
+	const sections = [`# Scheduler ${status}`, `Profile: **${profile.displayName}**`, `Route: **${route.kind}** (${route.reason})`, `Task: ${route.task}`];
 
 	for (const [index, result] of results.entries()) {
 		const stepStatus = result.exitCode === 0 && result.stopReason !== "error" && result.stopReason !== "aborted" ? "completed" : "failed";
@@ -1021,7 +862,7 @@ function formatResults(route: RouteDecision, results: StepResult[], hints: strin
 			result.submoduleWarning ? `Submodule warning: ${result.submoduleWarning}` : undefined,
 			result.generatedWarning ? `Generated/output warning: ${result.generatedWarning}` : undefined,
 			result.generatedBlockedPaths && result.generatedBlockedPaths.length > 0 ? `Blocked generated/output paths: ${result.generatedBlockedPaths.join(", ")}` : undefined,
-			result.patchPath ? `Patch: \`${result.patchPath}\`` : result.isolated ? "Patch: (none produced)" : undefined,
+			result.patchPath ? `${result.appliedToParent ? "Patch applied to parent (provenance)" : "Patch"}: \`${result.patchPath}\`` : result.isolated ? "Patch: (none produced)" : undefined,
 			result.applyCheckExitCode !== undefined
 				? `Parent apply check: ${result.applyCheckExitCode === 0 ? "clean" : "failed"}${result.applyCheckOutput ? `\n\n\`\`\`\n${result.applyCheckOutput}\n\`\`\`` : ""}`
 				: undefined,
@@ -1035,15 +876,18 @@ function formatResults(route: RouteDecision, results: StepResult[], hints: strin
 
 	if (parentStat !== undefined) sections.push(`## Parent working-tree diff stat\n\n\`\`\`\n${parentStat}\n\`\`\``);
 	if (hints.length > 0) sections.push(`## Validation hints\n${hints.map((hint) => `- ${hint}`).join("\n")}`);
-
-	if (isEditingRoute(route.kind)) {
+	const parentWasModified = results.some((result) => result.appliedToParent);
+	if (profile.isEditingRoute(route.kind)) {
 		sections.push([
 			"## Parent follow-up",
-			"Delegated edits were run in an isolated temporary git worktree. The parent checkout was not modified by the editing agent.",
-			"Inspect any patch path above, apply it manually if desired, then run validation in the parent session.",
+			parentWasModified
+				? "The isolated worker patch was applied to the parent checkout; subsequent post-step agents may also have modified the parent checkout."
+				: "Delegated edits were run in an isolated temporary git worktree. The parent checkout was not modified by the editing agent.",
+			parentWasModified
+				? "Inspect the parent diff and run validation in the parent session."
+				: "Inspect any patch path above, apply it manually if desired, then run validation in the parent session.",
 		].join("\n"));
 	}
-
 	return sections.join("\n\n");
 }
 
@@ -1069,7 +913,9 @@ function statusFromResults(results: StepResult[]): RouteRecord["status"] {
 
 async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: RouteDecision): Promise<RouteRunSummary> {
 	const controller = new AbortController();
-	const progress: string[] = [`route: ${route.kind}`, `reason: ${route.reason}`, "starting…"];
+	const changedPaths = await currentChangedPaths(ctx.cwd).catch(() => []);
+	const profile = await resolveSchedulerProfile(ctx.cwd, changedPaths);
+	const progress: string[] = [`profile: ${profile.id}`, `route: ${route.kind}`, `reason: ${route.reason}`, "starting…"];
 	const pushProgress = (line: string) => {
 		progress.push(line);
 		if (progress.length > 16) progress.splice(3, progress.length - 16);
@@ -1078,15 +924,15 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 	let results: StepResult[] = [];
 	let error: unknown;
 	let parentStat: string | undefined;
+	let execution: Promise<void> | undefined;
 
 	const execute = async (onProgress: ProgressCallback) => {
-		results = await runRoute(ctx.cwd, route, controller.signal, onProgress);
-		if (isEditingRoute(route.kind)) parentStat = await parentDiffStat(ctx.cwd, controller.signal);
+		results = await runRoute(ctx.cwd, route, profile, controller.signal, onProgress);
+		if (profile.isEditingRoute(route.kind)) parentStat = await parentDiffStat(ctx.cwd, controller.signal);
 	};
 
 	if (ctx.mode === "tui") {
-		let requestRender = () => {};
-		const completed = await ctx.ui.custom<boolean>((tui, theme, _keybindings, done) => {
+		const ui = ctx.ui.custom<boolean>((tui, theme, _keybindings, done) => {
 			let settled = false;
 			const finish = (value: boolean) => {
 				if (settled) return;
@@ -1094,19 +940,20 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 				done(value);
 			};
 
-			requestRender = () => tui.requestRender();
-			execute((line) => {
+			const requestRender = () => tui.requestRender();
+			execution = execute((line) => {
 				pushProgress(line);
 				requestRender();
-			}).then(() => finish(!controller.signal.aborted)).catch((caught) => {
+			});
+			execution.then(() => finish(!controller.signal.aborted)).catch((caught) => {
 				error = caught;
-				finish(!controller.signal.aborted);
+				finish(true);
 			});
 
 			return {
 				render(width: number) {
 					const fit = (line: string) => (width <= 0 ? "" : truncateToWidth(line, width));
-					const header = theme.fg("accent", theme.bold("Canopy scheduler"));
+					const header = theme.fg("accent", theme.bold(`${profile.displayName}`));
 					const hint = theme.fg("dim", "Esc aborts child agent/worktree run");
 					return [header, hint, "", ...progress.map((line) => theme.fg("muted", `• ${line}`))].map(fit);
 				},
@@ -1123,10 +970,12 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 				},
 			};
 		});
-
+		const outcome = await settleRouteUi(ui, () => execution ?? Promise.resolve());
+		const completed = outcome.completed;
+		if (outcome.error !== undefined) error = outcome.error;
 		if (!completed) {
-			const summary: RouteRunSummary = { status: "aborted", results, patchPaths: collectPatchPaths(results), validationHints: validationHints(route, results, ctx.cwd), parentStat };
-			pi.sendMessage({ customType: CUSTOM_TYPE, content: `# Scheduler aborted\n\nRoute: **${route.kind}**\n\nChild process termination was requested.`, display: true, details: { route } });
+			const summary: RouteRunSummary = { status: "aborted", results, patchPaths: collectPatchPaths(results), validationHints: validationHints(route, results, ctx.cwd, profile), parentStat };
+			pi.sendMessage({ customType: CUSTOM_TYPE, content: `# Scheduler aborted\n\nProfile: **${profile.displayName}**\n\nRoute: **${route.kind}**\n\nChild process termination was requested.`, display: true, details: { route, profile: profile.id } });
 			return summary;
 		}
 	} else {
@@ -1137,88 +986,80 @@ async function runRouteWithUi(pi: ExtensionAPI, ctx: ExtensionContext, route: Ro
 
 	if (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		const summary: RouteRunSummary = { status: "failed", results, patchPaths: collectPatchPaths(results), validationHints: validationHints(route, results, ctx.cwd), parentStat };
-		pi.sendMessage({ customType: CUSTOM_TYPE, content: `# Scheduler failed\n\nRoute: **${route.kind}**\n\n${message}`, display: true, details: { route, error: message } });
+		const summary: RouteRunSummary = { status: "failed", results, patchPaths: collectPatchPaths(results), validationHints: validationHints(route, results, ctx.cwd, profile), parentStat };
+		pi.sendMessage({ customType: CUSTOM_TYPE, content: `# Scheduler failed\n\nProfile: **${profile.displayName}**\n\nRoute: **${route.kind}**\n\n${message}`, display: true, details: { route, error: message } });
 		return summary;
 	}
 
-	const hints = validationHints(route, results, ctx.cwd);
+	const hints = validationHints(route, results, ctx.cwd, profile);
 	const summary: RouteRunSummary = { status: statusFromResults(results), results, patchPaths: collectPatchPaths(results), validationHints: hints, parentStat };
-	pi.sendMessage({ customType: CUSTOM_TYPE, content: formatResults(route, results, hints, parentStat), display: true, details: { route, results, parentStat, hints } });
+	pi.sendMessage({ customType: CUSTOM_TYPE, content: formatResults(route, results, hints, profile, parentStat), display: true, details: { route, results, parentStat, hints, profile: profile.id } });
 	return summary;
 }
 
 async function currentChangedPaths(cwd: string): Promise<string[]> {
-	const [unstaged, staged] = await Promise.all([
+	const [unstaged, staged, untracked] = await Promise.all([
 		gitCapture(cwd, ["diff", "--name-only"]).catch(() => ({ code: 1, stdout: "", stderr: "" })),
 		gitCapture(cwd, ["diff", "--cached", "--name-only"]).catch(() => ({ code: 1, stdout: "", stderr: "" })),
+		gitCapture(cwd, ["ls-files", "--others", "--exclude-standard"]).catch(() => ({ code: 1, stdout: "", stderr: "" })),
 	]);
-	return Array.from(new Set(`${unstaged.stdout}\n${staged.stdout}`.split("\n").map((line) => line.trim()).filter(Boolean))).sort();
+	return Array.from(new Set(`${unstaged.stdout}\n${staged.stdout}\n${untracked.stdout}`.split("\n").map((line) => line.trim()).filter(Boolean))).sort();
 }
 
-function buildValidationPlan(root: string, affectedPaths: string[]): ValidationPlan {
+function executableOnPath(command: string): boolean {
+	const pathValue = process.env.PATH ?? "";
+	return pathValue.split(path.delimiter).some((directory) => {
+		for (const candidate of process.platform === "win32" ? [command, `${command}.exe`, `${command}.cmd`] : [command]) {
+			try {
+				fs.accessSync(path.join(directory, candidate), fs.constants.X_OK);
+				return true;
+			} catch {
+				continue;
+			}
+		}
+		return false;
+	});
+}
+
+function validationCommandConfigured(root: string, command: ValidationCommandSpec): boolean {
+	if (!executableOnPath(command.command)) return false;
+	if (command.requiredFiles && !command.requiredFiles.some((file) => fs.existsSync(path.join(root, file)))) return false;
+	if (!command.requiredScript) return true;
+	const manifest = command.scriptManifest ? path.join(root, command.scriptManifest) : undefined;
+	if (!manifest || !fs.existsSync(manifest)) return false;
+	try {
+		const parsed = JSON.parse(fs.readFileSync(manifest, "utf8")) as { scripts?: Record<string, unknown> };
+		return typeof parsed.scripts?.[command.requiredScript] === "string";
+	} catch {
+		return false;
+	}
+}
+function buildValidationPlan(root: string, affectedPaths: string[], profile: SchedulerProfile): ValidationPlan {
 	const warnings: string[] = [];
 	const commands: ValidationCommand[] = [];
-	const packageDirs = findMoonPackageDirs(root, affectedPaths);
-	const moduleRoots = findMoonModuleRoots(root, affectedPaths);
-	const hasMoon = affectedPaths.some((filePath) =>
-		filePath.endsWith(".mbt") ||
-		filePath.endsWith("moon.pkg") ||
-		filePath.endsWith("moon.mod.json") ||
-		filePath.endsWith("moon.work"),
-	);
-	const hasTsWeb = affectedPaths.some((filePath) =>
-		/(^|\/)examples\/(web|demo-react|prosemirror|canvas\/web)\//.test(filePath) || /\.(ts|tsx|css|html)$/.test(filePath),
-	);
-	const docsOnly = affectedPaths.length > 0 && affectedPaths.every((filePath) => filePath.startsWith("docs/") && filePath.endsWith(".md"));
-	const generated = assessGeneratedPaths(affectedPaths);
-
+	const matchedRules = profile.validation.rules.filter((rule) => affectedPaths.some((filePath) => rule.pathPatterns.some((source) => new RegExp(source).test(filePath))));
+	const generated = assessGeneratedPaths(affectedPaths, profile);
 	if (generated.blocked.length > 0) warnings.push(`Generated/output paths changed: ${generated.blocked.join(", ")}. Prefer regenerating, not patching, these artifacts.`);
 	warnings.push(...generated.warnings);
 
-	if (hasMoon) {
-		for (const moduleRoot of moduleRoots) {
-			commands.push({ label: `moon check (${moduleRoot})`, command: "moon", args: ["check"], cwd: moduleRoot === "." ? root : path.join(root, moduleRoot) });
-		}
-		const broad = affectedPaths.some((filePath) => filePath.endsWith("moon.mod.json") || filePath.endsWith("moon.work")) || packageDirs.length === 0 || packageDirs.length > 4;
-		if (broad) {
-			for (const moduleRoot of moduleRoots) {
-				commands.push({ label: `moon test (${moduleRoot})`, command: "moon", args: ["test"], cwd: moduleRoot === "." ? root : path.join(root, moduleRoot) });
-			}
-		} else {
-			for (const packageDir of packageDirs) {
-				commands.push({
-					label: `moon test (${packageDir})`,
-					command: "moon",
-					args: ["test"],
-					cwd: packageDir === "." ? root : path.join(root, packageDir),
-				});
+	const seenCommands = new Set<string>();
+	for (const rule of matchedRules) {
+		for (const hint of rule.hints) warnings.push(hint);
+		for (const command of rule.commands) {
+			const key = `${command.command} ${command.args.join(" ")}`;
+			if (seenCommands.has(key)) continue;
+			seenCommands.add(key);
+			if (validationCommandConfigured(root, command)) {
+				commands.push({ ...command, cwd: root });
+			} else {
+				warnings.push(`Validation command unavailable or unconfigured: ${key}`);
 			}
 		}
-		warnings.push("Run moon fmt && moon info before committing; inspect .mbti diffs for unintended API changes.");
 	}
-
-	if (hasTsWeb) warnings.push("TS/web paths changed: build JS first and run the relevant npm typecheck/e2e command from CI when appropriate.");
-	if (docsOnly) {
-		const docsCheck = path.join(root, "check-docs.sh");
-		if (fs.existsSync(docsCheck)) commands.push({ label: "docs check", command: "bash", args: ["check-docs.sh"], cwd: root });
-		warnings.push("Docs-only change detected; run check-docs.sh when available.");
-	}
-	if (commands.length === 0 && warnings.length === 0) warnings.push("No automatic validation commands selected for these paths.");
-
-	return { affectedPaths, packageDirs, commands, warnings };
+	if (commands.length === 0 && warnings.length === 0) warnings.push(profile.validation.fallbackHint);
+	return { affectedPaths, commands, warnings };
 }
 
-async function runValidationCommands(plan: ValidationPlan, signal?: AbortSignal, onProgress?: ProgressCallback): Promise<ValidationCommandResult[]> {
-	const results: ValidationCommandResult[] = [];
-	for (const command of plan.commands) {
-		onProgress?.(`validate: ${command.label}`);
-		const result = await execCapture(command.cwd, command.command, command.args, signal).catch((error) => ({ code: 1, stdout: "", stderr: String(error) }));
-		results.push({ ...command, ...result });
-		if (result.code !== 0) break;
-	}
-	return results;
-}
 
 function formatValidation(target: string, plan: ValidationPlan, results: ValidationCommandResult[]): string {
 	const failed = results.find((result) => result.code !== 0);
@@ -1226,7 +1067,6 @@ function formatValidation(target: string, plan: ValidationPlan, results: Validat
 		`# Scheduler validation ${failed ? "failed" : "completed"}`,
 		`Target: ${target}`,
 		plan.affectedPaths.length > 0 ? `Affected paths:\n${plan.affectedPaths.map((filePath) => `- \`${filePath}\``).join("\n")}` : "Affected paths: (none)",
-		plan.packageDirs.length > 0 ? `MoonBit package dirs:\n${plan.packageDirs.map((dir) => `- \`${dir}\``).join("\n")}` : undefined,
 		plan.warnings.length > 0 ? `Warnings/hints:\n${plan.warnings.map((warning) => `- ${warning}`).join("\n")}` : undefined,
 	];
 
@@ -1257,9 +1097,10 @@ async function validateTarget(pi: ExtensionAPI, ctx: ExtensionContext, targetArg
 
 	if (target === "current") {
 		const affectedPaths = await currentChangedPaths(root);
-		const plan = buildValidationPlan(root, affectedPaths);
-		const results = await runValidationCommands(plan, ctx.signal, (line) => ctx.ui.notify(line, "info"));
-		pi.sendMessage({ customType: CUSTOM_TYPE, content: formatValidation("current", plan, results), display: true, details: { target, plan, results } });
+		const profile = await resolveSchedulerProfile(root, affectedPaths);
+		const plan = buildValidationPlan(root, affectedPaths, profile);
+		const results = await runValidationCommands(plan.commands, ctx.signal, (line) => ctx.ui.notify(line, "info"));
+		pi.sendMessage({ customType: CUSTOM_TYPE, content: formatValidation(`current (${profile.displayName})`, plan, results), display: true, details: { target, plan, results, profile: profile.id } });
 		return;
 	}
 
@@ -1284,11 +1125,12 @@ async function validateTarget(pi: ExtensionAPI, ctx: ExtensionContext, targetArg
 			pi.sendMessage({ customType: CUSTOM_TYPE, content: `# Scheduler validation failed\n\nPatch did not apply in validation worktree.\n\n\`\`\`\n${apply.stderr || apply.stdout}\n\`\`\``, display: true });
 			return;
 		}
-		const plan = buildValidationPlan(worktreeRoot, affectedPaths);
-		const results = await runValidationCommands(plan, ctx.signal, (line) => ctx.ui.notify(line, "info"));
-		pi.sendMessage({ customType: CUSTOM_TYPE, content: formatValidation(patchPath, plan, results), display: true, details: { target: patchPath, plan, results } });
+		const profile = await resolveSchedulerProfile(worktreeRoot, affectedPaths);
+		const plan = buildValidationPlan(worktreeRoot, affectedPaths, profile);
+		const results = await runValidationCommands(plan.commands, ctx.signal, (line) => ctx.ui.notify(line, "info"));
+		pi.sendMessage({ customType: CUSTOM_TYPE, content: formatValidation(`${patchPath} (${profile.displayName})`, plan, results), display: true, details: { target: patchPath, plan, results, profile: profile.id } });
 	} finally {
-		if (fs.existsSync(worktreeRoot)) await gitCapture(root, ["worktree", "remove", "--force", worktreeRoot], ctx.signal).catch(() => undefined);
+		if (fs.existsSync(worktreeRoot)) await gitCapture(root, ["worktree", "remove", "--force", worktreeRoot]).catch(() => undefined);
 		await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
 	}
 }
@@ -1331,9 +1173,9 @@ async function applyPatch(pi: ExtensionAPI, ctx: ExtensionContext, patchArg: str
 	pi.sendMessage({ customType: CUSTOM_TYPE, content, display: true, details: { patchPath, parentStat } });
 }
 
-function autopilotRejection(route: RouteDecision, summary: RouteRunSummary, patchText: string, parentClean: boolean): string | undefined {
-	if (route.kind !== "mechanic" || route.explicit) return "cautious autopilot only auto-applies high-confidence non-explicit mechanic routes";
-	if (route.reason !== "high-confidence mechanical scoped edit") return "mechanic route was not classified as high-confidence mechanical scoped edit";
+function autopilotRejection(route: RouteDecision, summary: RouteRunSummary, patchText: string, parentClean: boolean, profile: SchedulerProfile): string | undefined {
+	if (route.kind !== profile.autopilot.route || route.explicit) return `autopilot only auto-applies high-confidence non-explicit ${profile.autopilot.route} routes`;
+	if (route.reason !== "high-confidence mechanical scoped edit") return "route was not classified as a high-confidence mechanical scoped edit";
 	if (summary.status !== "completed") return `route status is ${summary.status}`;
 	if (!parentClean) return "parent working tree is not clean";
 	if (summary.patchPaths.length !== 1) return `expected exactly one patch, got ${summary.patchPaths.length}`;
@@ -1345,8 +1187,8 @@ function autopilotRejection(route: RouteDecision, summary: RouteRunSummary, patc
 	if (result.generatedWarning) return "patch has generated-file warnings";
 	if (result.baseWarning) return "route has parent-base warning";
 	const size = patchSize(patchText);
-	if (size.files > AUTOPILOT_MAX_FILES) return `patch touches ${size.files} files (limit ${AUTOPILOT_MAX_FILES})`;
-	if (size.changedLines > AUTOPILOT_MAX_CHANGED_LINES) return `patch changes ${size.changedLines} lines (limit ${AUTOPILOT_MAX_CHANGED_LINES})`;
+	if (size.files > profile.autopilot.maxFiles) return `patch touches ${size.files} files (limit ${profile.autopilot.maxFiles})`;
+	if (size.changedLines > profile.autopilot.maxChangedLines) return `patch changes ${size.changedLines} lines (limit ${profile.autopilot.maxChangedLines})`;
 	return undefined;
 }
 
@@ -1355,15 +1197,17 @@ async function runCautiousAutopilot(
 	ctx: ExtensionContext,
 	route: RouteDecision,
 ): Promise<{ handled: boolean; summary?: RouteRunSummary }> {
+	const changedPaths = await currentChangedPaths(ctx.cwd).catch(() => []);
+	const profile = await resolveSchedulerProfile(ctx.cwd, changedPaths);
 	const parentCleanBefore = await isParentTreeClean(ctx.cwd, ctx.signal);
 	if (!parentCleanBefore) return { handled: false };
 
-	ctx.ui.notify("Scheduler cautious autopilot running mechanic route", "info");
+	ctx.ui.notify(`${profile.displayName} cautious autopilot running ${profile.autopilot.route} route`, "info");
 	const summary = await runRouteWithUi(pi, ctx, route);
 	const patchPath = summary.patchPaths[0];
 	const patchText = patchPath && fs.existsSync(patchPath) ? await fs.promises.readFile(patchPath, "utf8") : "";
 	const parentCleanAfter = await isParentTreeClean(ctx.cwd, ctx.signal);
-	const rejection = autopilotRejection(route, summary, patchText, parentCleanBefore && parentCleanAfter);
+	const rejection = autopilotRejection(route, summary, patchText, parentCleanBefore && parentCleanAfter, profile);
 	if (rejection) {
 		pi.sendMessage({
 			customType: CUSTOM_TYPE,
@@ -1407,27 +1251,54 @@ async function runCautiousAutopilot(
 	return { handled: true, summary: { ...summary, parentStat } };
 }
 
-export default function canopyScheduler(pi: ExtensionAPI) {
-	let mode: SchedulerMode = "auto";
-	let autopilotMode: AutopilotMode = "cautious";
+interface SessionEntry {
+	type?: unknown;
+	customType?: unknown;
+	data?: unknown;
+}
+
+interface SessionManagerLike {
+	getBranch?: () => unknown;
+}
+
+function isSessionEntry(value: unknown): value is SessionEntry {
+	return typeof value === "object" && value !== null;
+}
+
+function isSchedulerState(value: unknown): value is SchedulerState {
+	if (typeof value !== "object" || value === null) return false;
+	const state = value as Record<string, unknown>;
+	return (state.mode === "auto" || state.mode === "off") &&
+		typeof state.classifierEnabled === "boolean" &&
+		(state.autopilotMode === "off" || state.autopilotMode === "cautious");
+}
+
+function isRouteRecord(value: unknown): value is RouteRecord {
+	return typeof value === "object" && value !== null;
+}
+export default function scheduler(pi: ExtensionAPI) {
+	let mode: SchedulerMode = "off";
+	let autopilotMode: AutopilotMode = "off";
 	let classifierEnabled = false;
 	let routeHistory: RouteRecord[] = [];
 
-	const restoreState = (ctx: { cwd: string; sessionManager?: any }) => {
-		mode = isCanopyCwd(ctx.cwd) ? "auto" : "off";
-		autopilotMode = "cautious";
+	const restoreState = async (ctx: { cwd: string; sessionManager?: SessionManagerLike }) => {
+		const profile = await resolveSchedulerProfile(ctx.cwd);
+		mode = profile.defaultMode;
+		autopilotMode = profile.autopilot.mode;
 		classifierEnabled = false;
 		routeHistory = [];
-		const entries = ctx.sessionManager?.getBranch?.() ?? [];
-		for (const entry of entries) {
-			if (entry.type === "custom" && entry.customType === STATE_TYPE) {
-				const data = entry.data as SchedulerState | undefined;
-				if (data?.mode === "auto" || data?.mode === "off") mode = data.mode;
-				if (data?.autopilotMode === "off" || data?.autopilotMode === "cautious") autopilotMode = data.autopilotMode;
-				if (typeof data?.classifierEnabled === "boolean") classifierEnabled = data.classifierEnabled;
+		const branch = typeof ctx.sessionManager?.getBranch === "function" ? ctx.sessionManager.getBranch() : [];
+		const entries = Array.isArray(branch) ? branch : [];
+		for (const rawEntry of entries) {
+			if (!isSessionEntry(rawEntry)) continue;
+			if (rawEntry.type === "custom" && rawEntry.customType === STATE_TYPE && isSchedulerState(rawEntry.data)) {
+				mode = rawEntry.data.mode;
+				autopilotMode = rawEntry.data.autopilotMode;
+				classifierEnabled = rawEntry.data.classifierEnabled;
 			}
-			if (entry.type === "custom" && entry.customType === ROUTE_RECORD_TYPE) {
-				routeHistory.push(entry.data as RouteRecord);
+			if (rawEntry.type === "custom" && rawEntry.customType === ROUTE_RECORD_TYPE && isRouteRecord(rawEntry.data)) {
+				routeHistory.push(rawEntry.data);
 			}
 		}
 		routeHistory = routeHistory.slice(-20);
@@ -1454,20 +1325,21 @@ export default function canopyScheduler(pi: ExtensionAPI) {
 	pi.registerMessageRenderer(CUSTOM_TYPE, (message) => new Markdown(String(message.content ?? ""), 0, 0, getMarkdownTheme()));
 
 	pi.registerCommand("scheduler", {
-		description: "Control or invoke the Canopy hard task scheduler: /scheduler on|off|status|autopilot|last|apply|validate|classify|mechanic|scout|moonbit-scout|plan|moonbit-plan|review|moonbit-review|ensemble-review|parallel-review|review-router|implement|worker",
+		description: "Control or invoke the active scheduler profile: /scheduler on|off|status|autopilot|last|apply|validate|classify|<route> <task>",
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
+			const profile = await resolveSchedulerProfile(ctx.cwd);
 			const arg = trimmed.toLowerCase();
 			if (arg === "on" || arg === "auto") {
 				mode = "auto";
 				persistState();
-				ctx.ui.notify("Canopy scheduler enabled", "info");
+				ctx.ui.notify(`${profile.displayName} enabled`, "info");
 				return;
 			}
 			if (arg === "off") {
 				mode = "off";
 				persistState();
-				ctx.ui.notify("Canopy scheduler disabled", "info");
+				ctx.ui.notify(`${profile.displayName} disabled`, "info");
 				return;
 			}
 			const autopilotMatch = trimmed.match(/^autopilot\s+(off|cautious|status)$/i);
@@ -1504,37 +1376,38 @@ export default function canopyScheduler(pi: ExtensionAPI) {
 				return;
 			}
 
-			const explicit = trimmed.match(/^(mechanic|scout|moonbit-scout|plan|moonbit-plan|review|moonbit-review|ensemble-review|parallel-review|review-router|implement|worker)\s+([\s\S]+)/i);
+			const explicit = trimmed.match(/^(\S+)\s+([\s\S]+)$/i);
 			if (explicit) {
-				const kind = explicit[1].toLowerCase() as RouteKind;
-				const task = explicit[2].trim();
-				const route: RouteDecision = { kind, task, reason: "explicit /scheduler command", explicit: true };
-				ctx.ui.setStatus("scheduler", `scheduler:${route.kind}`);
-				ctx.ui.notify(`Scheduler routing to ${route.kind}`, "info");
-				try {
-					const summary = await runRouteWithUi(pi, ctx, route);
-					recordRoute(route, summary);
-				} finally {
-					ctx.ui.setStatus("scheduler", mode === "auto" && isCanopyCwd(ctx.cwd) ? "scheduler:auto" : undefined);
+				const definition = resolveRouteDefinition(profile, explicit[1].toLowerCase(), explicit[2].trim(), true, []);
+				if (definition) {
+					const route: RouteDecision = { kind: definition.name, task: explicit[2].trim(), reason: "explicit /scheduler command", explicit: true };
+					ctx.ui.setStatus("scheduler", `scheduler:${route.kind}`);
+					ctx.ui.notify(`${profile.displayName} routing to ${route.kind}`, "info");
+					try {
+						const summary = await runRouteWithUi(pi, ctx, route);
+						recordRoute(route, summary);
+					} finally {
+						ctx.ui.setStatus("scheduler", mode === "auto" ? "scheduler:auto" : undefined);
+					}
+					return;
 				}
-				return;
 			}
 
 			ctx.ui.notify(
-				`Canopy scheduler: ${mode}; autopilot: ${autopilotMode}; classifier: ${classifierEnabled ? "on" : "off"}. Use direct: <task>, /scheduler autopilot off|cautious|status, /scheduler last, /scheduler apply <patch>, /scheduler validate [current|patch], or /scheduler mechanic|scout|moonbit-scout|plan|moonbit-plan|review|moonbit-review|ensemble-review|parallel-review|review-router|implement|worker <task>.`,
+				`${profile.displayName}: ${mode}; autopilot: ${autopilotMode}; classifier: ${classifierEnabled ? "on" : "off"}. Use direct: <task>, /scheduler autopilot off|cautious|status, /scheduler last, /scheduler apply <patch>, /scheduler validate [current|patch], or /scheduler ${routeNames(profile).join("|")} <task>.`,
 				"info",
 			);
 		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		restoreState(ctx);
-		if (ctx.hasUI && isCanopyCwd(ctx.cwd)) ctx.ui.setStatus("scheduler", mode === "auto" ? "scheduler:auto" : undefined);
+		await restoreState(ctx);
+		if (ctx.hasUI) ctx.ui.setStatus("scheduler", mode === "auto" ? "scheduler:auto" : undefined);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
-		restoreState(ctx);
-		if (ctx.hasUI && isCanopyCwd(ctx.cwd)) ctx.ui.setStatus("scheduler", mode === "auto" ? "scheduler:auto" : undefined);
+		await restoreState(ctx);
+		if (ctx.hasUI) ctx.ui.setStatus("scheduler", mode === "auto" ? "scheduler:auto" : undefined);
 	});
 
 	pi.on("input", async (event, ctx) => {
@@ -1545,23 +1418,30 @@ export default function canopyScheduler(pi: ExtensionAPI) {
 
 		const text = event.text.trim();
 		if (!text || text.startsWith("/")) return { action: "continue" as const };
-
 		const direct = stripPrefix(text, "direct");
 		if (direct !== undefined) return { action: "transform" as const, text: direct };
 
-		if (ctx.mode !== "tui" || mode !== "auto" || !isCanopyCwd(ctx.cwd)) return { action: "continue" as const };
-
-		let route = classify(text);
+		if (ctx.mode !== "tui" || mode !== "auto") return { action: "continue" as const };
+		const changedPaths = await currentChangedPaths(ctx.cwd).catch(() => []);
+		const profile = await resolveSchedulerProfile(ctx.cwd, changedPaths);
+		let route = classify(text, profile);
+		if (route) {
+			const definition = resolveRouteDefinition(profile, route.kind, text, false, changedPaths);
+			if (!definition) route = undefined;
+		}
 		if (!route && classifierEnabled) {
-			ctx.ui.notify("Scheduler classifier checking ambiguous prompt...", "info");
-			const decision = await classifyWithCheapModel(ctx.cwd, text, ctx.signal);
-			if (decision && decision.route !== "inline" && decision.confidence >= CLASSIFIER_THRESHOLD) {
-				route = { kind: decision.route, task: text, reason: `classifier: ${decision.reason} (${decision.confidence.toFixed(2)})`, explicit: false };
+			ctx.ui.notify(`${profile.displayName} classifier checking ambiguous prompt...`, "info");
+			const decision = await classifyWithCheapModel(ctx.cwd, text, profile, ctx.signal);
+			if (decision && decision.route !== "inline" && decision.confidence >= profile.classifier.threshold) {
+				const definition = resolveRouteDefinition(profile, decision.route, text, false, changedPaths);
+				if (definition) {
+					route = { kind: definition.name, task: text, reason: `classifier: ${decision.reason} (${decision.confidence.toFixed(2)})`, explicit: false };
+				}
 			}
 		}
 		if (!route) return { action: "continue" as const };
 
-		if (autopilotMode === "cautious" && route.kind === "mechanic" && !route.explicit && route.reason === "high-confidence mechanical scoped edit") {
+		if (autopilotMode === "cautious" && route.kind === profile.autopilot.route && !route.explicit && route.reason === "high-confidence mechanical scoped edit") {
 			ctx.ui.setStatus("scheduler", "scheduler:autopilot");
 			try {
 				const autopilot = await runCautiousAutopilot(pi, ctx, route);

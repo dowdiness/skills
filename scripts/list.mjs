@@ -1,12 +1,13 @@
 import { existsSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { extensions } from '../meta.ts'
+import { agents, extensions } from '../meta.ts'
 import { parseFrontmatter } from './frontmatter.mjs'
 
 const root = new URL('..', import.meta.url).pathname
 const skillsDir = join(root, 'skills')
 const extensionsDir = join(root, 'extensions')
+const agentsDir = join(root, 'agents')
 
 for (const entry of (await readdir(skillsDir)).sort()) {
   const dir = join(skillsDir, entry)
@@ -14,6 +15,23 @@ for (const entry of (await readdir(skillsDir)).sort()) {
   const text = await readFile(join(dir, 'SKILL.md'), 'utf8')
   const info = parseFrontmatter(text) ?? {}
   console.log(`${entry}\t${info.description || ''}`)
+}
+
+console.log('\n--- Agents ---')
+if (!existsSync(agentsDir)) {
+  console.log('(none)')
+} else {
+  let printed = false
+  for (const entry of (await readdir(agentsDir)).sort()) {
+    if (!entry.endsWith('.md')) continue
+    const name = entry.replace(/\.md$/, '')
+    const text = await readFile(join(agentsDir, entry), 'utf8')
+    const info = parseFrontmatter(text) ?? {}
+    const description = agents.find((agent) => agent.name === name)?.notes ?? info.description ?? ''
+    console.log(`${name}\t${description}`)
+    printed = true
+  }
+  if (!printed) console.log('(none)')
 }
 
 console.log('\n--- Extensions ---')

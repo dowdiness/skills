@@ -122,6 +122,7 @@ def main [--repair, --help] {
   let repo_dir = ($env.FILE_PWD | path dirname | path expand)
   let skills_root = ($repo_dir | path join "skills")
   let extensions_root = ($repo_dir | path join "extensions")
+  let agents_root = ($repo_dir | path join "agents")
   let target_dirs = [
     ($env.HOME | path join ".agents/skills")
     ($env.HOME | path join ".claude/skills")
@@ -129,6 +130,9 @@ def main [--repair, --help] {
   ]
   let extension_target_dirs = [
     ($env.HOME | path join ".pi/agent/extensions")
+  ]
+  let agent_target_dirs = [
+    ($env.HOME | path join ".pi/agent/agents")
   ]
 
   mut conflicts: list<string> = []
@@ -148,6 +152,22 @@ def main [--repair, --help] {
       $backup_dir = $result.backup_dir
       if $result.action == "conflict" {
         $conflicts = ($conflicts | append $result.path)
+      }
+    }
+  }
+
+  if ($agents_root | path exists) {
+    for target_dir in $agent_target_dirs {
+      mkdir $target_dir
+      let agent_files = (ls $agents_root | where type == "file" | where name =~ '\.md$')
+      for agent in $agent_files {
+        let name = ($agent.name | path basename)
+        let link = ($target_dir | path join $name)
+        let result = (link-one $agent.name $link $repair $repo_dir $backup_dir)
+        $backup_dir = $result.backup_dir
+        if $result.action == "conflict" {
+          $conflicts = ($conflicts | append $result.path)
+        }
       }
     }
   }
@@ -174,6 +194,26 @@ def main [--repair, --help] {
           if $result.action == "conflict" {
             $conflicts = ($conflicts | append $result.path)
           }
+        }
+      }
+    }
+  }
+  let legacy_extension_names = ["canopy-scheduler" "canopy-scheduler.ts"]
+  for target_dir in $extension_target_dirs {
+    for name in $legacy_extension_names {
+      let link = ($target_dir | path join $name)
+      if not (($link | path exists) or (is-symlink $link)) { continue }
+      if $repair {
+        let bd = if $backup_dir == "" { make-backup-dir } else { $backup_dir }
+        if (backup-conflict $link $bd) {
+          $backup_dir = $bd
+        } else {
+          $conflicts = ($conflicts | append $link)
+        }
+      } else {
+        remove-stale-repo-link $link $repo_dir
+        if (($link | path exists) or (is-symlink $link)) {
+          $conflicts = ($conflicts | append $link)
         }
       }
     }

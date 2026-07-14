@@ -13,6 +13,7 @@
     "sync-vendor": "node scripts/sync-vendor-skills.mjs",
     "sync-vendor-extensions": "node scripts/sync-vendor-extensions.mjs",
     "uninstall-local": "nu scripts/uninstall.nu",
+    "test": "bun test extensions/scheduler/*.test.ts extensions/scheduler/*.test.mjs scripts/install-pi-package.test.mjs",
     "validate": "node scripts/validate.mjs"
   },
   "peerDependencies": {

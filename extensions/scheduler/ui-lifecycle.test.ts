@@ -18,6 +18,23 @@ test("waits for route execution after the UI reports an abort", async () => {
 	expect(await settled).toEqual({ completed: false });
 });
 
+test("waits for route execution when the UI rejects", async () => {
+	let resolveExecution!: () => void;
+	const execution = new Promise<void>((resolve) => { resolveExecution = resolve; });
+	const uiError = new Error("ui closed unexpectedly");
+	const settled = settleRouteUi(Promise.reject(uiError), () => execution);
+	let finished = false;
+	settled.then(() => { finished = true; });
+
+	await Promise.resolve();
+	expect(finished).toBe(false);
+
+	resolveExecution();
+	const result = await settled;
+	expect(result.completed).toBe(true);
+	expect(result.error).toBe(uiError);
+});
+
 test("reports execution errors as failures rather than aborts", async () => {
 	const error = new Error("child failed");
 	const result = await settleRouteUi(Promise.resolve(true), async () => { throw error; });

@@ -6,12 +6,12 @@ pi extensions that add tools and commands to the coding agent. Extensions are Ty
 
 | Extension | Origin | Purpose |
 |---|---|---|
-| `canopy-scheduler` | manual | Routes high-confidence Canopy tasks to subagents and records scheduler patch/validation state. |
+| `scheduler` | manual | Profile-driven task routing, validation, patch management, and cautious autopilot. |
 | `subagent` | manual | Registers the subagent delegation tool with user/project agent discovery and fallback handling. |
 
-## canopy-scheduler
+## scheduler
 
-Routes high-confidence Canopy tasks to specialized subagents (scout, planner, worker, reviewer, moonbit-scout, moonbit-planner, moonbit-reviewer).
+Routes high-confidence tasks through the active repository profile. Canopy repository markers select MoonBit-aware routes; other repositories use a generic profile that defaults to `off` until explicitly enabled.
 
 Features:
 - Automatic task classification and routing

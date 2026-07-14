@@ -25,6 +25,10 @@ Installable skills live in this directory. Each skill is a directory with a `SKI
 | `handoff` | manual | End-of-session memory and next-session prompt ritual. |
 | `orchestrate` | manual | Cross-repo and multiagent session setup. |
 | `tuple-wrapper-api-style` | manual | Tuple wrapper API style guidance. |
+| `parallel-review` | manual | Four-agent pre-merge review coordinator for MoonBit/Canopy changes. |
+
+Reviewer agent definitions for this skill live in [`../agents/`](../agents/) and
+are installed into `~/.pi/agent/agents` by `npm run install-pi-package`.
 
 ## moonbit-housekeeping dependency
 

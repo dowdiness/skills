@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { extensions, skills } from '../meta.ts'
+import { agents, extensions, skills } from '../meta.ts'
 import { parseFrontmatter } from './frontmatter.mjs'
 import { diffDirs, outputDir, rel, sourceDir, vendorSkills } from './vendor-skills.mjs'
 import {
@@ -13,6 +13,7 @@ import {
 const root = new URL('..', import.meta.url).pathname
 const skillsDir = join(root, 'skills')
 const extensionsDir = join(root, 'extensions')
+const agentsDir = join(root, 'agents')
 
 async function exists(path) {
   try {
@@ -75,6 +76,49 @@ for (const name of catalog) {
   }
 }
 
+let agentFailures = 0
+let agentCount = 0
+const actualAgents = new Set()
+if (await exists(agentsDir)) {
+  for (const entry of await readdir(agentsDir)) {
+    const filePath = join(agentsDir, entry)
+    const entryStat = await stat(filePath)
+    if (!entryStat.isFile() || !entry.endsWith('.md')) continue
+    const name = entry.slice(0, -3)
+    actualAgents.add(name)
+    agentCount += 1
+    const text = await readFile(filePath, 'utf8')
+    const fm = parseFrontmatter(text)
+    if (!fm) {
+      console.error(`FAIL ${name}: missing YAML frontmatter`)
+      agentFailures += 1
+      continue
+    }
+    if (fm.name !== name) {
+      console.error(`FAIL ${name}: frontmatter name is ${fm.name || '(missing)'}`)
+      agentFailures += 1
+    }
+    if (!('description' in fm)) {
+      console.error(`FAIL ${name}: missing description`)
+      agentFailures += 1
+    }
+  }
+}
+
+const agentCatalog = new Set(agents.map((agent) => agent.name))
+for (const name of actualAgents) {
+  if (!agentCatalog.has(name)) {
+    console.error(`FAIL ${name}: missing from meta.ts agents`)
+    agentFailures += 1
+  }
+}
+for (const name of agentCatalog) {
+  if (!actualAgents.has(name)) {
+    console.error(`FAIL ${name}: present in meta.ts agents but missing from agents/`)
+    agentFailures += 1
+  }
+}
+
 for (const skill of vendorSkills()) {
   const diffs = await diffDirs(sourceDir(skill), outputDir(skill))
   if (diffs.length > 0) {
@@ -113,10 +157,7 @@ if (await exists(extensionsDir)) {
         console.error(`FAIL extension ${entry}: missing default export function in index.ts`)
         extensionFailures += 1
       }
-      continue
-    }
-
-    if (entryStat.isFile() && entry.endsWith('.ts')) {
+    } else if (entryStat.isFile() && entry.endsWith('.ts')) {
       const name = entry.replace(/\.ts$/, '')
       actualExtensions.add(name)
       extensionCount += 1
@@ -157,13 +198,13 @@ for (const ext of vendorExtensions()) {
   }
 }
 
-if (count === 0 && extensionCount === 0) {
-  console.error('FAIL: no skills or extensions found')
+if (count === 0 && extensionCount === 0 && agentCount === 0) {
+  console.error('FAIL: no skills, agents, or extensions found')
   failures += 1
 }
 
-const totalCount = count + extensionCount
-const totalFailures = failures + extensionFailures
+const totalCount = count + extensionCount + agentCount
+const totalFailures = failures + extensionFailures + agentFailures
 
 if (totalFailures > 0) {
   console.error(`RESULT: ${Math.max(0, totalCount - totalFailures)}/${totalCount}`)

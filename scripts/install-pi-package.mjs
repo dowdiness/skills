@@ -16,9 +16,11 @@ Installs this repository as a pi package without duplicate local resources.
 Default behavior:
   - back up local extension copies that would conflict with package extensions
   - back up local skill copies/symlinks managed by this repo
+  - back up local agent definitions managed by this repo
   - run pi install
   - disable this package's pi skill resources in settings
   - recreate ~/.agents, ~/.claude, and ~/.codex skill symlinks to the installed package
+  - recreate ~/.pi/agent/agents symlinks to the installed package
 
 This keeps pi extensions package-managed while preserving skill compatibility
 for hosts that still discover skills from ~/.agents/skills.
@@ -79,6 +81,15 @@ function listExtensionNames() {
     .sort()
 }
 
+function listAgentNames() {
+  const dir = join(root, 'agents')
+  if (!pathExists(dir)) return []
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => entry.name)
+    .sort()
+}
+
 function timestamp() {
   const now = new Date()
   const pad = (n) => String(n).padStart(2, '0')
@@ -96,18 +107,34 @@ function sameSymlink(linkPath, targetPath) {
 }
 
 function inferInstalledPackageRoot() {
-  if (source.includes('github.com/dowdiness/skills')) return join(home, '.pi', 'agent', 'git', 'github.com', 'dowdiness', 'skills')
   if (isAbsolute(source) || source.startsWith('./') || source.startsWith('../')) return resolve(source)
-  return null
+  if (!source.startsWith('git:')) return null
+  const repoPath = source.slice('git:'.length).split('/').filter(Boolean)
+  if (repoPath.length < 3 || repoPath.some((part) => part === '.' || part === '..')) return null
+  return join(home, '.pi', 'agent', 'git', ...repoPath)
 }
 
 const installedPackageRoot = inferInstalledPackageRoot()
+
+function packageEntryMatches(entry) {
+  const entrySource = typeof entry === 'string' ? entry : entry?.source
+  if (typeof entrySource !== 'string') return false
+  if (entrySource === source) return true
+  if (!installedPackageRoot || entrySource.startsWith('git:')) return false
+  try {
+    return resolve(join(home, '.pi', 'agent'), entrySource) === installedPackageRoot
+  } catch {
+    return false
+  }
+}
 const backupRoot = join(home, '.pi', 'agent', `dowdiness-skills-local-backup-${timestamp()}`)
 const backupSkills = join(backupRoot, 'skills')
 const backupExtensions = join(backupRoot, 'extensions')
+const backupAgents = join(backupRoot, 'agents')
 const moves = []
 const skillNames = listSkillNames()
 const extensionNames = listExtensionNames()
+const agentNames = listAgentNames()
 
 const skillTargets = [
   { label: 'agents', dir: join(home, '.agents', 'skills') },
@@ -125,7 +152,8 @@ for (const name of skillNames) {
   }
 }
 
-for (const name of extensionNames) {
+const legacyExtensionNames = ['canopy-scheduler']
+for (const name of [...new Set([...extensionNames, ...legacyExtensionNames])]) {
   const candidates = name.endsWith('.ts')
     ? [join(home, '.pi', 'agent', 'extensions', name)]
     : [join(home, '.pi', 'agent', 'extensions', name), join(home, '.pi', 'agent', 'extensions', `${name}.ts`)]
@@ -134,8 +162,16 @@ for (const name of extensionNames) {
   }
 }
 
+for (const name of agentNames) {
+  const from = join(home, '.pi', 'agent', 'agents', name)
+  const expected = installedPackageRoot ? join(installedPackageRoot, 'agents', name) : null
+  if (pathExists(from) && (!expected || !sameSymlink(from, expected))) {
+    moves.push({ from, to: join(backupAgents, name) })
+  }
+}
+
 if (moves.length === 0) {
-  console.log('No local skill/extension collisions found.')
+  console.log('No local skill, extension, or agent collisions found.')
 } else {
   console.log(`Backing up ${moves.length} local resource(s) to ${backupRoot}`)
   for (const move of moves) console.log(`${dryRun ? 'DRY ' : ''}MOVE ${move.from} -> ${move.to}`)
@@ -164,9 +200,9 @@ if (!keepPackageSkills) {
   if (pathExists(settingsPath)) {
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
     settings.packages = (settings.packages ?? []).map((entry) => {
-      if (entry === source) return { source, skills: [] }
-      if (entry && typeof entry === 'object' && entry.source === source) return { ...entry, skills: [] }
-      return entry
+      if (!packageEntryMatches(entry)) return entry
+      if (typeof entry === 'string') return { source: entry, skills: [] }
+      return { ...entry, skills: [] }
     })
     writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`)
     console.log(`Disabled package skill resources for ${source}; compatibility symlinks will provide skills.`)
@@ -183,6 +219,17 @@ if (!keepPackageSkills && installedPackageRoot && pathExists(join(installedPacka
     }
   }
   console.log('Linked compatibility skill directories from the installed package.')
+}
+
+if (installedPackageRoot && pathExists(join(installedPackageRoot, 'agents'))) {
+  const agentTarget = join(home, '.pi', 'agent', 'agents')
+  mkdirSync(agentTarget, { recursive: true })
+  for (const name of agentNames) {
+    const target = join(installedPackageRoot, 'agents', name)
+    const linkPath = join(agentTarget, name)
+    if (pathExists(target) && !pathExists(linkPath)) symlinkSync(target, linkPath)
+  }
+  console.log('Linked agent definitions from the installed package.')
 }
 
 console.log(noInstall ? '\nPrepared local resources. Run this smoke test after pi install:' : '\nInstalled pi package. Run this smoke test to verify startup:')

@@ -17,7 +17,7 @@ mock.module("@earendil-works/pi-tui", () => ({
 }));
 
 // Dynamic import intentionally isolates the scheduler from unavailable peer packages in this unit test.
-const { writeReviewContext } = await import("./index.ts");
+const { execCapture, writeReviewContext } = await import("./index.ts");
 
 function git(cwd: string, ...args: string[]): void {
 	execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -75,4 +75,8 @@ test("marks oversized untracked context incomplete", async () => {
 		if (contextDir) rmSync(contextDir, { recursive: true, force: true });
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+test("reports a signaled generic capture as a failure", async () => {
+	const result = await execCapture(".", process.execPath, ["-e", "process.kill(process.pid, 'SIGTERM')"]);
+	expect(result.code).not.toBe(0);
 });

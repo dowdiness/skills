@@ -154,3 +154,13 @@ test("removes the abort listener after validation exits", async () => {
 	], signal);
 	expect(removed).toBe(1);
 });
+test("reports a signaled agent exit as a failure", async () => {
+	const result = await executeAgentProcess(".", agent, "terminate", undefined, undefined, {
+		getInvocation: () => nodeInvocation("process.kill(process.pid, 'SIGTERM')"),
+		writePrompt: async () => ({ dir: "/tmp", filePath: "/tmp/unused" }),
+		summarizeMessage: () => undefined,
+		getFinalOutput: () => "",
+	});
+	expect(result.exitCode).not.toBe(0);
+	expect(result.stopReason).not.toBe("aborted");
+});

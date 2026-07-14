@@ -286,7 +286,7 @@ async function writePrompt(agentName: string, prompt: string): Promise<{ dir: st
 	return { dir: tmpDir, filePath };
 }
 
-async function execCapture(
+export async function execCapture(
 	cwd: string,
 	command: string,
 	args: string[],
@@ -335,7 +335,7 @@ async function execCapture(
 	else signal?.addEventListener("abort", abort, { once: true });
 	proc.stdout.on("data", (data) => { stdout = append(stdout, data.toString()); });
 	proc.stderr.on("data", (data) => { stderr = append(stderr, data.toString()); });
-	proc.on("close", (code) => settle({ code: code ?? 0, stdout, stderr, truncated: truncated || undefined }));
+	proc.on("close", (code, signalName) => settle({ code: code ?? (signalName ? 1 : 0), stdout, stderr, truncated: truncated || undefined }));
 	proc.on("error", fail);
 	return promise;
 }

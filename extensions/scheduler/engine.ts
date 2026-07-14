@@ -162,7 +162,7 @@ export async function executeAgentProcess(
 		};
 		proc.stdout.on("data", (data) => { buffer += data.toString(); const lines = buffer.split("\n"); buffer = lines.pop() || ""; for (const line of lines) processLine(line); });
 		proc.stderr.on("data", (data) => { stderr += data.toString(); });
-		proc.on("close", (code) => { settled = true; if (buffer.trim()) processLine(buffer); resolve(wasAborted ? 130 : (code ?? 0)); });
+		proc.on("close", (code, signalName) => { settled = true; if (buffer.trim()) processLine(buffer); resolve(wasAborted ? 130 : (code ?? (signalName ? 1 : 0))); });
 		proc.on("error", () => { settled = true; resolve(1); });
 		const exitCode = await promise;
 		if (signal?.aborted) return { agent: agent.name, task, exitCode: 130, messages, stderr, output: dependencies.getFinalOutput(messages), model, stopReason: "aborted", errorMessage: "Scheduler route aborted" };

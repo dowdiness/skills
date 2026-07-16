@@ -20,6 +20,20 @@ npm run validate-agent-models
 `fallbackModels`, compares them with the live `pi --list-models` inventory, and
 accepts Pi thinking-level suffixes such as `:high`.
 
+## Check the installed Pi agent environment
+
+```bash
+npm run check-agent-env
+npm --silent run check-agent-env -- --json
+```
+
+This read-only diagnostic verifies the pinned package checkout, package-managed
+agent links, scheduler/subagent extension filters, development-only extension
+overrides, configured model IDs, and a zero-inference Pi startup. It never
+repairs, deletes, installs, or updates resources; unavailable model IDs are
+reported as `WARN`, inventory/startup failures as `FAIL`, and any `FAIL` exits
+1.
+
 ## Scheduler profiles
 
 The packaged `extensions/scheduler/` extension selects a profile from repository markers. Canopy markers enable the Canopy profile; all other repositories use the generic profile and remain disabled until `/scheduler on` is issued.

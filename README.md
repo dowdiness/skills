@@ -33,10 +33,15 @@ SKILLS_SHA='<commit SHA>'
 git clone https://github.com/dowdiness/skills.git
 cd skills
 git checkout "$SKILLS_SHA"
-git submodule update --init --recursive
+git submodule update --init
 
 node scripts/install-pi-package.mjs git:github.com/dowdiness/skills --ref "$SKILLS_SHA" --extensions-only
 node scripts/install-pi-package.mjs git:github.com/dowdiness/skills --ref "$SKILLS_SHA" --agents-only --no-install
+```
+
+Before running `validate-agent-models`, configure or log in to every provider used by the selected agent models. The command intentionally reports models from unconfigured providers as unavailable; successful agent/extension installation does not itself supply provider credentials.
+
+```bash
 npm run validate-agent-models
 pi --offline --no-session --no-tools -p "respond ok"
 ```

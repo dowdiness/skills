@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, symlinkSync, lstatSync, readlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, lstatSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -31,14 +31,50 @@ test("migrates the legacy canopy-scheduler extension link", () => {
 		rmSync(oldTarget, { recursive: true, force: true });
 	}
 });
+test("backs up deprecated lens names without touching unrelated agents", () => {
+	const home = mkdtempSync(join(tmpdir(), "skills-installer-test-"));
+	const agentsDir = join(home, ".pi", "agent", "agents");
+	mkdirSync(agentsDir, { recursive: true });
+	const legacy = join(agentsDir, "reviewer-flash.md");
+	const custom = join(agentsDir, "my-custom-agent.md");
+	writeFileSync(legacy, "legacy");
+	writeFileSync(custom, "custom");
+	try {
+		const result = spawnSync(process.execPath, [installer, repositoryRoot, "--no-install"], {
+			cwd: repositoryRoot,
+			env: { ...process.env, HOME: home },
+			encoding: "utf8",
+		});
+
+		expect(result.status).toBe(0);
+		expect(() => lstatSync(legacy)).toThrow();
+		expect(lstatSync(custom).isFile()).toBe(true);
+		const backupRoot = result.stdout.match(/Backing up \d+ local resource\(s\) to (.+)/)?.[1]?.trim();
+		expect(backupRoot).toBeString();
+		expect(lstatSync(join(backupRoot, "agents", "reviewer-flash.md")).isFile()).toBe(true);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
 test("installs Canopy parallel-review agent compatibility links into a clean home", () => {
 	const home = mkdtempSync(join(tmpdir(), "skills-installer-test-"));
 	const agents = [
-		"parallel-reviewer.md",
+		"doc-writer.md",
+		"ensemble-reviewer.md",
+		"mechanic.md",
+		"moonbit-planner.md",
+		"moonbit-refactor.md",
 		"moonbit-reviewer.md",
-		"reviewer-flash.md",
-		"reviewer-mimo.md",
-		"reviewer-qwen.md",
+		"moonbit-scout.md",
+		"parallel-reviewer.md",
+		"planner.md",
+		"review-router.md",
+		"reviewer.md",
+		"reviewer-api-boundary.md",
+		"reviewer-correctness.md",
+		"reviewer-idioms.md",
+		"scout.md",
+		"worker.md",
 	];
 	try {
 		const result = spawnSync(process.execPath, [installer, repositoryRoot, "--no-install"], {

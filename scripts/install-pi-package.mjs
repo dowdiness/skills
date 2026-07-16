@@ -170,6 +170,14 @@ for (const name of agentNames) {
   }
 }
 
+// These lens names were previously shipped by this repository. Migrate only
+// this explicit legacy set; unrelated user-defined agents remain untouched.
+const legacyAgentNames = ['reviewer-flash.md', 'reviewer-mimo.md', 'reviewer-qwen.md']
+for (const name of legacyAgentNames) {
+  const from = join(home, '.pi', 'agent', 'agents', name)
+  if (pathExists(from)) moves.push({ from, to: join(backupAgents, name) })
+}
+
 if (moves.length === 0) {
   console.log('No local skill, extension, or agent collisions found.')
 } else {

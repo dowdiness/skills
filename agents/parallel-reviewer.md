@@ -2,7 +2,7 @@
 name: parallel-reviewer
 description: Run four specialized reviewers in parallel and consolidate findings
 model: opencode/nemotron-3-ultra-free
-fallbackModels: openai-codex/gpt-5.5:medium, opencode-go/qwen3.7-plus
+fallbackModels: openai-codex/gpt-5.6-sol, opencode-go/qwen3.7-plus
 tools: read, grep, find, ls, subagent
 ---
 
@@ -22,11 +22,11 @@ report.
 3. Use the `subagent` tool to spawn these four agents in parallel:
    - `moonbit-reviewer` — MoonBit correctness, public API/package-boundary
      safety, `.mbti` drift, and Canopy validation risks
-   - `reviewer-flash` — crashes, edge cases, stale references, invariant
+   - `reviewer-correctness` — crashes, edge cases, stale references, invariant
      violations, semantic regressions
-   - `reviewer-mimo` — readability, unnecessary mutation, manual loops/indexing,
+   - `reviewer-idioms` — readability, unnecessary mutation, manual loops/indexing,
      and MoonBit idioms
-   - `reviewer-qwen` — exported surface, re-exports, public constructors/fields,
+   - `reviewer-api-boundary` — exported surface, re-exports, public constructors/fields,
      trait bounds, and package ownership
 4. Pass each agent the same complete review context, including any concrete
    file paths needed to inspect the supplied diff.
@@ -54,9 +54,9 @@ full reviewer reports.
 
 ## Reviewer Status
 - `moonbit-reviewer`: usable report received | failed-or-missing
-- `reviewer-flash`: usable report received | failed-or-missing
-- `reviewer-mimo`: usable report received | failed-or-missing
-- `reviewer-qwen`: usable report received | failed-or-missing
+- `reviewer-correctness`: usable report received | failed-or-missing
+- `reviewer-idioms`: usable report received | failed-or-missing
+- `reviewer-api-boundary`: usable report received | failed-or-missing
 
 ## Files Reviewed
 - `path/to/file.mbt` (lines X-Y)

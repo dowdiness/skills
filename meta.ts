@@ -66,11 +66,22 @@ export interface AgentMeta {
 }
 
 export const agents: AgentMeta[] = [
-  { name: 'parallel-reviewer', kind: 'manual', source: 'in-tree', notes: 'Coordinator for the parallel-review skill.' },
-  { name: 'moonbit-reviewer', kind: 'manual', source: 'in-tree', notes: 'MoonBit correctness and package-boundary reviewer.' },
-  { name: 'reviewer-flash', kind: 'manual', source: 'in-tree', notes: 'Correctness and edge-case reviewer.' },
-  { name: 'reviewer-mimo', kind: 'manual', source: 'in-tree', notes: 'Readability and idiomatic-code reviewer.' },
-  { name: 'reviewer-qwen', kind: 'manual', source: 'in-tree', notes: 'API-surface and boundary reviewer.' },
+  { name: 'doc-writer', kind: 'manual', source: 'in-tree', notes: 'Writes source-backed documentation and fixes documentation drift.' },
+  { name: 'ensemble-reviewer', kind: 'manual', source: 'in-tree', notes: 'Runs low-cost reviewers in parallel and consolidates findings.' },
+  { name: 'mechanic', kind: 'manual', source: 'in-tree', notes: 'Applies narrowly scoped mechanical edits.' },
+  { name: 'moonbit-planner', kind: 'manual', source: 'in-tree', notes: 'Plans MoonBit/Canopy changes with API and package-boundary checks.' },
+  { name: 'moonbit-refactor', kind: 'manual', source: 'in-tree', notes: 'Refactors MoonBit code conservatively and validates affected packages.' },
+  { name: 'moonbit-reviewer', kind: 'manual', source: 'in-tree', notes: 'Reviews MoonBit APIs, package boundaries, and validation readiness.' },
+  { name: 'moonbit-scout', kind: 'manual', source: 'in-tree', notes: 'Reconstructs MoonBit/Canopy structure and existing APIs.' },
+  { name: 'parallel-reviewer', kind: 'manual', source: 'in-tree', notes: 'Runs four specialized review lenses and consolidates findings.' },
+  { name: 'planner', kind: 'manual', source: 'in-tree', notes: 'Turns repository context and requirements into implementation plans.' },
+  { name: 'review-router', kind: 'manual', source: 'in-tree', notes: 'Chooses and invokes an appropriate review workflow.' },
+  { name: 'reviewer', kind: 'manual', source: 'in-tree', notes: 'Reviews code for quality, security, and maintainability.' },
+  { name: 'reviewer-api-boundary', kind: 'manual', source: 'in-tree', notes: 'Reviews public APIs and package-boundary safety.' },
+  { name: 'reviewer-correctness', kind: 'manual', source: 'in-tree', notes: 'Finds correctness bugs, edge cases, and invariant violations.' },
+  { name: 'reviewer-idioms', kind: 'manual', source: 'in-tree', notes: 'Reviews readability, idioms, and unnecessary complexity.' },
+  { name: 'scout', kind: 'manual', source: 'in-tree', notes: 'Reconnoiters codebases and compresses findings for handoff.' },
+  { name: 'worker', kind: 'manual', source: 'in-tree', notes: 'Implements scoped tasks in an isolated agent context.' },
 ]
 
 

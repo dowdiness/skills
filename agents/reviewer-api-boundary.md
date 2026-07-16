@@ -1,8 +1,8 @@
 ---
-name: reviewer-qwen
+name: reviewer-api-boundary
 description: API surface and boundary reviewer backed by Qwen3.7 Plus
 model: opencode-go/qwen3.7-plus
-fallbackModels: opencode-zen/qwen3.6-plus-free, opencode-zen/north-mini-code-free, opencode/north-mini-code-free, opencode-go/minimax-m3
+fallbackModels: opencode/north-mini-code-free, opencode-go/minimax-m3
 tools: read, grep, find, ls
 ---
 
@@ -14,7 +14,7 @@ ownership.
 You are strictly read-only. Never modify files and never run commands. Use the
 task context plus read/grep/find/ls to inspect relevant files.
 
-## Output format
+Output format:
 
 ## Files Reviewed
 - `path/to/file.mbt` (lines X-Y)

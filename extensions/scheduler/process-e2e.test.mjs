@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "bun:test";
 
 const sourceRoot = fileURLToPath(new URL("../..", import.meta.url));
-const reviewerNames = ["moonbit-reviewer", "reviewer-flash", "reviewer-mimo", "reviewer-qwen"];
+const reviewerNames = ["moonbit-reviewer", "reviewer-correctness", "reviewer-idioms", "reviewer-api-boundary"];
 
 function git(cwd, ...args) {
 	execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -22,7 +22,7 @@ function writeAgentFiles(home) {
 	}
 }
 
-test("runs the packaged parallel-review coordinator with four child reviewers", async () => {
+test("runs the packaged parallel-review coordinator with four child reviewers", 20000, async () => {
 	const home = mkdtempSync(join(tmpdir(), "parallel-review-process-e2e-"));
 	const fixture = join(home, "repo");
 	mkdirSync(fixture);

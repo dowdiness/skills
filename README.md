@@ -46,12 +46,12 @@ pnpx skills add dowdiness/skills --skill='*'
 ```
 
 Skill-only installation still requires the repository helper (or manual
-installation of the five agent definitions) before `parallel-review` can run.
+installation of the 16 agent definitions) before agent workflows can run.
 
 ## What's included
 
 - [`skills/`](skills/) — MoonBit, incr, loom, handoff, orchestration, and API-style skills.
-- [`agents/`](agents/) — the `parallel-reviewer` coordinator and four specialized reviewer definitions.
+- [`agents/`](agents/) — the complete bundle of 16 agent definitions, including planning, implementation, scouting, documentation, and review workflows.
 - [`extensions/`](extensions/) — profile-driven scheduler and subagent delegation pi extensions.
 - [`scripts/`](scripts/) — validation, local install, cleanup, and vendor-sync helpers.
 - [`vendor/`](vendor/) — submodule sources for vendored skills.

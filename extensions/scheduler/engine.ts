@@ -59,7 +59,7 @@ export interface AgentProcessSpec {
 export function isCompleteParallelReviewOutput(output: string): boolean {
 	if (/INCOMPLETE REVIEW|failed-or-missing/i.test(output)) return false;
 	const lines = output.split(/\r?\n/);
-	return ["moonbit-reviewer", "reviewer-flash", "reviewer-mimo", "reviewer-qwen"]
+	return ["moonbit-reviewer", "reviewer-correctness", "reviewer-idioms", "reviewer-api-boundary"]
 		.every((name) => {
 			const status = new RegExp("[`\"']?" + name + "[`\"']?\\s*[:=]\\s*[`\"']?usable report received[`\"']?(?=$|[\\s,}])", "i");
 			return lines.some((line) => status.test(line));

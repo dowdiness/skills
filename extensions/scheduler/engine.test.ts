@@ -76,21 +76,21 @@ test("passes explicit child extensions while disabling discovery", async () => {
 test("requires usable reports from all four parallel reviewers", () => {
 	const complete = [
 		"moonbit-reviewer: usable report received",
-		"reviewer-flash: usable report received",
-		"reviewer-mimo: usable report received",
-		"reviewer-qwen: usable report received",
+		"reviewer-correctness: usable report received",
+		"reviewer-idioms: usable report received",
+		"reviewer-api-boundary: usable report received",
 	].join("\n");
 	expect(isCompleteParallelReviewOutput(complete)).toBe(true);
-	expect(isCompleteParallelReviewOutput(complete.replace("reviewer-mimo", "missing"))).toBe(false);
+	expect(isCompleteParallelReviewOutput(complete.replace("reviewer-idioms", "missing"))).toBe(false);
 	expect(isCompleteParallelReviewOutput(`${complete}\nINCOMPLETE REVIEW`)).toBe(false);
 	const markdownStatuses = [
 		"- `moonbit-reviewer`: usable report received",
-		"- `reviewer-flash`: usable report received",
-		"- `reviewer-mimo`: usable report received",
-		"- `reviewer-qwen`: usable report received",
+		"- `reviewer-correctness`: usable report received",
+		"- `reviewer-idioms`: usable report received",
+		"- `reviewer-api-boundary`: usable report received",
 	].join("\n");
 	expect(isCompleteParallelReviewOutput(markdownStatuses)).toBe(true);
-	expect(isCompleteParallelReviewOutput(complete.replace("reviewer-mimo: usable report received", "reviewer-mimo: did not provide a usable report"))).toBe(false);
+	expect(isCompleteParallelReviewOutput(complete.replace("reviewer-idioms: usable report received", "reviewer-idioms: did not provide a usable report"))).toBe(false);
 });
 test("removes the abort listener after an agent exits", async () => {
 	let removed = 0;

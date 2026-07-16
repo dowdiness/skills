@@ -52,7 +52,7 @@ repository's `agents/` directory. Use `npm run install-pi-package` or
 
 Installing only this directory with an Agent Skills client does not install the
 agent definitions. In that case, install the package with the repository helper
-or copy the five `agents/*.md` files into the user agent directory before use.
+or copy the five review-workflow `agents/*.md` files into the user agent directory before use.
 If any required agent is unavailable, stop and report an incomplete review
 rather than silently substituting a different role.
 
@@ -83,18 +83,18 @@ is incomplete and must not be described as clean, complete, or merge-ready.
 | Agent | Focus |
 |---|---|
 | `moonbit-reviewer` | MoonBit correctness, package boundaries, public API, `.mbti` drift, and Canopy validation risks |
-| `reviewer-flash` | Crashes, edge cases, stale references, invariant violations, and semantic regressions |
-| `reviewer-mimo` | Readability, naming, unnecessary mutation, manual loops/indexing, and MoonBit idioms |
-| `reviewer-qwen` | Exported surface, re-exports, constructors/fields, trait bounds, and package ownership |
+| `reviewer-correctness` | Crashes, edge cases, stale references, invariant violations, and semantic regressions |
+| `reviewer-idioms` | Readability, naming, unnecessary mutation, manual loops/indexing, and MoonBit idioms |
+| `reviewer-api-boundary` | Exported surface, re-exports, constructors/fields, trait bounds, and package ownership |
 
 ## Output contract
 
 ```markdown
 ## Reviewer Status
 - `moonbit-reviewer`: usable report received | failed-or-missing
-- `reviewer-flash`: usable report received | failed-or-missing
-- `reviewer-mimo`: usable report received | failed-or-missing
-- `reviewer-qwen`: usable report received | failed-or-missing
+- `reviewer-correctness`: usable report received | failed-or-missing
+- `reviewer-idioms`: usable report received | failed-or-missing
+- `reviewer-api-boundary`: usable report received | failed-or-missing
 
 ## Files Reviewed
 - `path/to/file.mbt` (lines X-Y)

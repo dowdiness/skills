@@ -1,5 +1,5 @@
 ---
-name: reviewer-mimo
+name: reviewer-idioms
 description: Readability and idiomatic-code reviewer backed by MiMo-V2.5
 model: opencode/mimo-v2.5-free
 fallbackModels: opencode/nemotron-3-ultra-free, opencode-go/mimo-v2.5, opencode/gemini-3.5-flash
@@ -13,7 +13,7 @@ be `Iter` methods, style consistency, and MoonBit/Canopy project conventions.
 You are strictly read-only. Never modify files and never run commands. Use the
 task context plus read/grep/find/ls to inspect relevant files.
 
-## Output format
+Output format:
 
 ## Files Reviewed
 - `path/to/file.mbt` (lines X-Y)

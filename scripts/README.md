@@ -6,14 +6,19 @@ Helper scripts for validation, local installation, cleanup, and vendor sync.
 
 ```bash
 npm run validate
+npm run validate-agent-models
 ```
 
-Checks:
+`validate` checks:
 - Each skill in `skills/` has `SKILL.md` with matching frontmatter `name` and `description`.
 - Each extension in `extensions/` has a default export function.
 - Each packaged agent in `agents/` has valid `name` and `description` frontmatter.
 - Every directory in `skills/` and `extensions/` is listed in `meta.ts`, and vice versa.
 - Vendored skills and extensions show no drift from their submodule sources.
+
+`validate-agent-models` reads every agent's `model` and comma-separated
+`fallbackModels`, compares them with the live `pi --list-models` inventory, and
+accepts Pi thinking-level suffixes such as `:high`.
 
 ## Scheduler profiles
 
@@ -67,11 +72,38 @@ That keeps package-managed extensions active while preserving compatibility with
 Options:
 
 ```bash
-node scripts/install-pi-package.mjs --dry-run             # show what would be backed up
-node scripts/install-pi-package.mjs --no-install          # back up/link only; skip pi install
-node scripts/install-pi-package.mjs --keep-package-skills # do not filter package skills or create compatibility symlinks
-node scripts/install-pi-package.mjs <source>              # install from a different source
+node scripts/install-pi-package.mjs --dry-run                         # show what would be backed up
+node scripts/install-pi-package.mjs --no-install                      # back up/link only; skip pi install
+node scripts/install-pi-package.mjs --agents-only --no-install        # only migrate/link package-managed agents
+node scripts/install-pi-package.mjs --extensions-only                # only migrate extensions and install/update the package
+node scripts/install-pi-package.mjs --keep-package-skills            # do not filter package skills or create compatibility symlinks
+node scripts/install-pi-package.mjs git:github.com/dowdiness/skills --ref <commit-or-tag>
 ```
+
+`--agents-only` and `--extensions-only` are mutually exclusive. Agents-only
+never touches skills, package skill settings, or extensions. Extensions-only
+never touches skills, agents, or package skill settings. `--ref` composes a git
+pin as `git:...@<ref>` and rejects already-pinned or local-path sources.
+
+### Reproducible fresh-machine sequence
+
+Pin the checkout, package source, and submodules to the same audited commit:
+
+```bash
+SKILLS_SHA='<commit SHA>'
+git clone https://github.com/dowdiness/skills.git
+cd skills
+git checkout "$SKILLS_SHA"
+git submodule update --init --recursive
+
+node scripts/install-pi-package.mjs git:github.com/dowdiness/skills --ref "$SKILLS_SHA" --extensions-only
+node scripts/install-pi-package.mjs git:github.com/dowdiness/skills --ref "$SKILLS_SHA" --agents-only --no-install
+npm run validate-agent-models
+pi --offline --no-session --no-tools -p "respond ok"
+```
+
+The local absolute-path extension override form is for development only; do
+not use it for reproducible deployment.
 
 ## Sync vendor content
 

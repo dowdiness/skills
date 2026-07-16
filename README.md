@@ -23,6 +23,28 @@ package, and keeps compatibility symlinks for hosts that still read
 `~/.agents/skills`. Run `pi --offline --no-session --no-tools -p "respond ok"`
 after installation to smoke-test startup.
 
+### Reproducible fresh-machine install
+
+Use one immutable commit for the checkout, package source, and submodules. Set
+`SKILLS_SHA` to the audited commit that contains the workflow before running:
+
+```bash
+SKILLS_SHA='<commit SHA>'
+git clone https://github.com/dowdiness/skills.git
+cd skills
+git checkout "$SKILLS_SHA"
+git submodule update --init --recursive
+
+node scripts/install-pi-package.mjs git:github.com/dowdiness/skills --ref "$SKILLS_SHA" --extensions-only
+node scripts/install-pi-package.mjs git:github.com/dowdiness/skills --ref "$SKILLS_SHA" --agents-only --no-install
+npm run validate-agent-models
+pi --offline --no-session --no-tools -p "respond ok"
+```
+
+The extensions-only step installs/updates the pinned package; the agents-only
+step only migrates and links agent definitions. Local absolute-path extension
+overrides are development-only and must not be used for reproducible deployment.
+
 For skills and extensions only, the package can also be installed directly:
 
 ```bash

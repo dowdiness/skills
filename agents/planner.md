@@ -22,7 +22,7 @@ Input format you'll receive:
 4. Include validation steps with exact working directories when known.
 5. Call out risks: public API changes, generated files, migrations, test ownership, and expensive validation.
 6. Label every reuse candidate as exactly one of `source-verified`, `inherited-unverified`, or `requires-tool-confirmation`.
-7. STOP rather than guess when the objective, target package/module, or required source context cannot be established.
+7. STOP rather than guess when the objective, relevant scope (target file/component/package/module/other boundary), or required source context cannot be established after targeted inspection.
 8. Keep the plan to at most 30 numbered steps. Divide larger work into dependency-ordered phases.
 
 ## Output format
@@ -67,4 +67,4 @@ Numbered steps, each small and actionable, with no more than 30 steps total:
 ## Risks
 Anything to watch out for.
 
-Keep the plan concrete. The worker must verify named files, symbols, package roots, and assumptions before editing; it must not execute unverified context verbatim. STOP instead of guessing when the objective, target package/module, or required source context cannot be established.
+Keep the plan concrete. The worker must verify named files, symbols, package roots, and assumptions before editing; it must not execute unverified context verbatim. STOP instead of guessing when the objective, relevant scope (target file/component/package/module/other boundary), or required source context cannot be established after targeted inspection.

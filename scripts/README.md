@@ -20,6 +20,29 @@ npm run validate-agent-models
 `fallbackModels`, compares them with the live `pi --list-models` inventory, and
 accepts Pi thinking-level suffixes such as `:high`.
 
+`validate-agent-prompts` checks the stable shape of all 16 packaged agent
+prompts. It is a static contract check, not a behavioral model evaluation; it
+makes no model calls and does not inspect credentials.
+
+## Opt-in agent usage reporting
+
+`agent-usage-report` is a read-only, opt-in summarizer. It accepts only explicit
+JSONL files or directories and never scans the home directory:
+
+```bash
+npm run agent-usage-report -- --format table ./path/to/explicit-sessions
+npm run agent-usage-report -- --format json ./path/to/session.jsonl
+npm run agent-usage-report -- --help
+```
+
+Reports contain only allowlisted agent names, invocation/runtime counts,
+recorded model IDs, numeric usage totals, and duration when timestamps permit.
+Task text, cwd, content, messages, responses, credentials, paths, and filenames
+are omitted. Human delegation outcomes are not merged into runtime success or
+failure. Keep real session data out of the repository; the checked-in fixtures
+are synthetic only. Live model evaluations remain a separately budgeted,
+provider-approved future facility.
+
 ## Check the installed Pi agent environment
 
 ```bash

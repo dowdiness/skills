@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { agents, extensions, skills } from '../meta.ts'
 import { parseFrontmatter } from './frontmatter.mjs'
+import { checkAgentPromptContracts } from './agent-prompt-contracts.mjs'
 import { diffDirs, outputDir, rel, sourceDir, vendorSkills } from './vendor-skills.mjs'
 import {
   diffDirs as diffExtensionDirs,
@@ -79,6 +80,7 @@ for (const name of catalog) {
 let agentFailures = 0
 let agentCount = 0
 const actualAgents = new Set()
+const agentPromptTexts = new Map()
 if (await exists(agentsDir)) {
   for (const entry of await readdir(agentsDir)) {
     const filePath = join(agentsDir, entry)
@@ -88,6 +90,7 @@ if (await exists(agentsDir)) {
     actualAgents.add(name)
     agentCount += 1
     const text = await readFile(filePath, 'utf8')
+    agentPromptTexts.set(name, text)
     const fm = parseFrontmatter(text)
     if (!fm) {
       console.error(`FAIL ${name}: missing YAML frontmatter`)
@@ -117,6 +120,11 @@ for (const name of agentCatalog) {
     console.error(`FAIL ${name}: present in meta.ts agents but missing from agents/`)
     agentFailures += 1
   }
+}
+
+for (const failure of checkAgentPromptContracts(agentPromptTexts)) {
+  console.error(`FAIL ${failure}`)
+  agentFailures += 1
 }
 
 for (const skill of vendorSkills()) {

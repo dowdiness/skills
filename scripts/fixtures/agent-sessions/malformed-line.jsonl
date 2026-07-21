@@ -1,0 +1,2 @@
+this is not JSON and contains FAKE_MALFORMED_CREDENTIAL
+{"type":"unknown","secret":"FAKE_UNKNOWN_SECRET"}

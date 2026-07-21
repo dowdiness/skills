@@ -14,11 +14,12 @@
     "sync-vendor-extensions": "node scripts/sync-vendor-extensions.mjs",
     "uninstall-local": "nu scripts/uninstall.nu",
     "check-agent-env": "node scripts/check-agent-env.mjs",
-    "test": "bun test extensions/scheduler/*.test.ts extensions/scheduler/*.test.mjs scripts/install-pi-package.test.mjs scripts/validate-agent-models.test.mjs scripts/check-agent-env.test.mjs scripts/agent-prompt-contracts.test.mjs scripts/agent-usage-report.test.mjs",
+    "test": "bun test extensions/scheduler/*.test.ts extensions/scheduler/*.test.mjs scripts/install-pi-package.test.mjs scripts/validate-agent-models.test.mjs scripts/check-agent-env.test.mjs scripts/agent-prompt-contracts.test.mjs scripts/agent-usage-report.test.mjs scripts/agent-observation.test.mjs",
     "validate": "node scripts/validate.mjs",
     "validate-agent-models": "node scripts/validate-agent-models.mjs",
     "validate-agent-prompts": "node scripts/agent-prompt-contracts.mjs",
-    "agent-usage-report": "node scripts/agent-usage-report.mjs"
+    "agent-usage-report": "node scripts/agent-usage-report.mjs",
+    "agent-observation": "node scripts/agent-observation.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",

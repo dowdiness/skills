@@ -54,6 +54,37 @@ are not merged into runtime success or failure. Keep real session data out of th
 repository; the checked-in fixtures are synthetic only. Live model evaluations
 remain a separately budgeted, provider-approved future facility.
 
+## Private agent observation cohort
+
+The observation workflow measures aggregate runtime evidence and records small, structured human incidents. Run `start` after setup, then `/clear` (or begin a new session) before normal use:
+
+```bash
+npm run agent-observation -- start
+# use pi normally; finish/exit pi before reading sessions
+npm run agent-observation -- report
+npm run agent-observation -- status
+npm run agent-observation -- incident --agent worker --category wrong_route --severity low --note "selected the wrong review route"
+```
+
+`start` requires a clean Git worktree and creates a private cohort under
+`$XDG_STATE_HOME/skills-agent-observation/<short-head>` (or
+`~/.local/state/skills-agent-observation/<short-head>`). It stores the full
+commit and UTC start time, hashes of existing normalized absolute JSONL paths,
+and an empty incident store; it does not read or copy session content. `report`
+should be run only after Pi exits. It considers only newly created JSONL files,
+never writes to the sessions directory, and persists aggregate-only data in the
+private cohort. `status` shows only commit/time, counts, and aggregate runtime
+fields. Incident notes are bounded single-line operator notes; do not put task
+text, paths, cwd, credentials, or other identifying details in them. Valid
+categories are `false_clarification`, `false_stop`, `unsafe_proceed`,
+`wrong_route`, `false_complete`, `rework`, and `good_assumption`.
+
+Keep the state directory private and out of commits; it is intentionally not
+tracked or committed. Review the first 30–50 invocations for a useful signal,
+and treat that as a review threshold rather than a statistical guarantee. The
+current reporter measures runtime evidence only and cannot automatically judge
+semantic answer quality.
+
 ## Check the installed Pi agent environment
 
 ```bash

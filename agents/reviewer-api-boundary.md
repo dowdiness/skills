@@ -1,8 +1,8 @@
 ---
 name: reviewer-api-boundary
-description: API surface and boundary reviewer backed by Qwen3.7 Plus
-model: opencode-go/qwen3.7-plus
-fallbackModels: opencode/north-mini-code-free, opencode-go/minimax-m3
+description: API surface and boundary reviewer backed by DeepSeek V4 Pro
+model: deepseek/deepseek-v4-pro
+fallbackModels: opencode-go/minimax-m3, opencode/north-mini-code-free, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls
 ---
 

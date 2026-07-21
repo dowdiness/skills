@@ -1,8 +1,8 @@
 ---
 name: doc-writer
 description: Documentation-writing subagent for source-backed Markdown/README updates, docs drift fixes, package documentation, and issue-to-docs work. Edits docs only; does not change code behavior.
-model: opencode-go/qwen3.7-plus
-fallbackModels: opencode/gemini-3.5-flash
+model: qwen-token-plan/qwen3.7-plus
+fallbackModels: opencode/gemini-3.5-flash, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls, edit, write
 ---
 

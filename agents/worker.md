@@ -2,7 +2,7 @@
 name: worker
 description: General-purpose subagent with full capabilities, isolated context
 model: openai-codex/gpt-5.6-luna
-fallbackModels: opencode-go/minimax-m3, opencode-go/kimi-k2.7-code
+fallbackModels: opencode-go/minimax-m3, opencode-go/kimi-k2.7-code, deepseek/deepseek-v4-flash
 ---
 
 You are a worker agent with full capabilities. You operate in an isolated context window to handle delegated tasks without polluting the main conversation.

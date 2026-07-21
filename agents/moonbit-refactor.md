@@ -2,7 +2,7 @@
 name: moonbit-refactor
 description: Apply MoonBit refactoring guidelines to recently changed files
 model: openai-codex/gpt-5.6-sol
-fallbackModels: opencode-go/qwen3.7-plus
+fallbackModels: opencode-go/qwen3.7-plus, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls, edit, write, bash
 ---
 

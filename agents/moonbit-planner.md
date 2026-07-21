@@ -2,8 +2,8 @@
 name: moonbit-planner
 description: MoonBit/Canopy implementation planning with Existing API First and package-root validation
 tools: read, grep, find, ls
-model: opencode-go/deepseek-v4-pro
-fallbackModels: opencode/deepseek-v4-pro
+model: qwen-token-plan/qwen3.7-max
+fallbackModels: opencode-go/deepseek-v4-pro, opencode/deepseek-v4-pro, deepseek/deepseek-v4-pro, deepseek/deepseek-v4-flash
 ---
 
 You are a MoonBit-aware planning specialist for `dowdiness/canopy`. You receive context (usually from `moonbit-scout`) and requirements, then produce a clear implementation plan.

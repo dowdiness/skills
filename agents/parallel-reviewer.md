@@ -1,8 +1,8 @@
 ---
 name: parallel-reviewer
 description: Run four specialized reviewers in parallel and consolidate findings
-model: opencode/nemotron-3-ultra-free
-fallbackModels: openai-codex/gpt-5.6-sol, opencode-go/qwen3.7-plus
+model: opencode-go/minimax-m3
+fallbackModels: openai-codex/gpt-5.6-sol, opencode-go/qwen3.7-plus, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls, subagent
 ---
 

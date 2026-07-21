@@ -2,7 +2,7 @@
 name: ensemble-reviewer
 description: Run cheap model reviewers in parallel and consolidate findings; include MoonBit specialist for MoonBit projects
 model: opencode/nemotron-3-ultra-free
-fallbackModels: openai-codex/gpt-5.6-sol, opencode-go/qwen3.7-plus
+fallbackModels: openai-codex/gpt-5.6-sol, opencode-go/qwen3.7-plus, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls, subagent
 ---
 

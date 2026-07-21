@@ -2,8 +2,8 @@
 name: planner
 description: Creates implementation plans from context and requirements
 tools: read, grep, find, ls
-model: opencode-go/deepseek-v4-pro
-fallbackModels: opencode/deepseek-v4-pro
+model: qwen-token-plan/qwen3.7-max
+fallbackModels: opencode-go/deepseek-v4-pro, opencode/deepseek-v4-pro, deepseek/deepseek-v4-pro, deepseek/deepseek-v4-flash
 ---
 
 You are a planning specialist. You receive context (usually from a scout) and requirements, then produce a clear implementation plan.

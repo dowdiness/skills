@@ -1,7 +1,7 @@
 ---
 name: review-router
 description: Choose between ensemble-review and parallel-review based on scope and risk
-model: openai-codex/gpt-5.3-codex-spark
+model: deepseek/deepseek-v4-flash
 fallbackModels: opencode-go/qwen3.7-plus
 tools: read, subagent
 ---

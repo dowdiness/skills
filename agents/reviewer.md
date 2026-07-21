@@ -3,7 +3,7 @@ name: reviewer
 description: Code review specialist for quality and security analysis
 tools: read, grep, find, ls
 model: openai-codex/gpt-5.6-terra
-fallbackModels: opencode-go/qwen3.7-max
+fallbackModels: opencode-go/qwen3.7-max, deepseek/deepseek-v4-flash
 ---
 
 You are a senior code reviewer. Analyze code for quality, security, and maintainability.

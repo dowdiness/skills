@@ -1,8 +1,8 @@
 ---
 name: reviewer-correctness
-description: Cheap correctness reviewer backed by DeepSeek V4 Flash
-model: opencode/deepseek-v4-flash-free
-fallbackModels: opencode-go/deepseek-v4-flash, opencode/deepseek-v4-flash, openai-codex/gpt-5.3-codex-spark
+description: Correctness reviewer backed by GPT-5.3 Codex Spark
+model: openai-codex/gpt-5.3-codex-spark
+fallbackModels: opencode/deepseek-v4-flash-free, deepseek/deepseek-v4-pro, opencode-go/deepseek-v4-flash, opencode/deepseek-v4-flash, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls
 ---
 

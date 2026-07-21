@@ -36,11 +36,29 @@ report.
    - whether this was classified as a MoonBit project/task and why
    Ask agents not to rediscover the whole repository unless needed for a
    specific finding.
-5. Wait for all reports.
-6. Deduplicate overlapping findings, resolve contradictions, and rank by
+5. Wait for all reports. Do not manually retry a failed reviewer; the
+   `subagent` runtime owns the configured primary-to-fallback model chain.
+6. Classify every dispatched leaf as `usable report received` or
+   `failed-or-missing`. A usable report requires non-empty `## Files Reviewed`
+   and `## Summary` sections. Preserve runtime fallback notes only when they
+   are present in the returned result; do not infer a rate limit, model, or
+   attempt count.
+7. Deduplicate overlapping findings, resolve contradictions, and rank by
    severity. Give `moonbit-reviewer` findings extra weight for MoonBit API,
    package-boundary, `.mbti`, and validation issues.
-7. Output a single consolidated report.
+8. Output a single consolidated report. If any dispatched leaf is
+   `failed-or-missing`, begin `## Summary` with `INCOMPLETE REVIEW`, name every
+   missing reviewer, and never claim the review is clean, complete, or
+   merge-ready.
+
+## Reviewer Status
+- `reviewer-correctness`: usable report received | failed-or-missing
+- `reviewer-idioms`: usable report received | failed-or-missing
+- `reviewer-api-boundary`: usable report received | failed-or-missing
+- Include `moonbit-reviewer`: usable report received | failed-or-missing only when it was dispatched.
+
+Every dispatched leaf must have a status entry. A usable report requires
+non-empty `## Files Reviewed` and `## Summary` sections.
 
 ## Output format
 

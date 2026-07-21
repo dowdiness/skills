@@ -16,6 +16,11 @@ import { resolveRouteDefinition, resolveSchedulerProfile, routeFor, routeNames, 
 import { executeAgentProcess, executeRouteSteps, isCompleteParallelReviewOutput, runValidationCommands } from "./engine.js";
 import { settleRouteUi } from "./ui-lifecycle.js";
 const SUBAGENT_EXTENSION = fileURLToPath(new URL("../subagent/index.ts", import.meta.url));
+
+export function selectAgentExtensions(agent: Pick<AgentConfig, "name" | "tools">): string[] | undefined {
+	return agent.tools?.includes("subagent") ? [SUBAGENT_EXTENSION] : undefined;
+}
+
 const MAX_REVIEW_FILE_BYTES = 256 * 1024;
 const MAX_REVIEW_DIFF_BYTES = 2 * 1024 * 1024;
 const MAX_REVIEW_UNTRACKED_BYTES = 2 * 1024 * 1024;
@@ -603,7 +608,7 @@ async function runAgent(
 	}
 	const processAgent = {
 		...agent,
-		extensions: agentName === "parallel-reviewer" ? [SUBAGENT_EXTENSION] : undefined,
+		extensions: selectAgentExtensions(agent),
 	};
 	const result = await executeAgentProcess(cwd, processAgent, task, signal, onProgress, {
 		getInvocation: getPiInvocation,

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { expect, mock, test } from "bun:test";
 
@@ -17,11 +18,19 @@ mock.module("@earendil-works/pi-tui", () => ({
 }));
 
 // Dynamic import intentionally isolates the scheduler from unavailable peer packages in this unit test.
-const { execCapture, writeReviewContext } = await import("./index.ts");
+const { execCapture, selectAgentExtensions, writeReviewContext } = await import("./index.ts");
+const subagentExtension = fileURLToPath(new URL("../subagent/index.ts", import.meta.url));
 
 function git(cwd: string, ...args: string[]): void {
 	execFileSync("git", args, { cwd, stdio: "ignore" });
 }
+
+test("selects subagent extension from declared tools", () => {
+	for (const name of ["ensemble-reviewer", "parallel-reviewer", "review-router"]) {
+		expect(selectAgentExtensions({ name, tools: ["read", "subagent"] })).toEqual([subagentExtension]);
+	}
+	expect(selectAgentExtensions({ name: "reviewer", tools: ["read", "grep"] })).toBeUndefined();
+});
 
 test("captures committed branch diff and untracked files", async () => {
 	const root = mkdtempSync(join(tmpdir(), "scheduler-context-test-"));

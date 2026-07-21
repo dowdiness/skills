@@ -1,6 +1,6 @@
 ---
 name: reviewer-idioms
-description: Readability and idiomatic-code reviewer backed by Qwen 3.7 Plus
+description: Focused reviewer for readability, naming, mutation, loops, and project idioms
 model: qwen-token-plan/qwen3.7-plus
 fallbackModels: opencode/mimo-v2.5-free, opencode/nemotron-3-ultra-free, opencode-go/mimo-v2.5, opencode/gemini-3.5-flash, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls

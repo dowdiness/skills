@@ -1,6 +1,6 @@
 ---
 name: reviewer-api-boundary
-description: API surface and boundary reviewer backed by DeepSeek V4 Pro
+description: Focused reviewer for public APIs, package boundaries, constructor and field visibility, and trait-bound safety
 model: deepseek/deepseek-v4-pro
 fallbackModels: opencode-go/minimax-m3, opencode/north-mini-code-free, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls

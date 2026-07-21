@@ -98,4 +98,4 @@ Numbered steps, each small and actionable, with no more than 30 steps total:
 ## Risks
 Anything to watch out for, including package boundaries, public API drift, generated files, submodules, and validation cost.
 
-Keep the plan concrete. The worker must verify named files, symbols, package roots, and assumptions before editing; it must not execute unverified context verbatim. STOP instead of guessing when the objective, target package/module, or required source context cannot be established. `moon ide`, `moon check`, and `moon test` are planned preflight/validation commands only for this agent, not completed verification.
+Keep the plan concrete. The worker must verify named files, symbols, package roots, and assumptions before editing; it must not execute unverified context verbatim. Return `CLARIFICATION NEEDED` when materially different interpretations remain after targeted inspection, and reserve `STOPPED` for contradictory instructions or a required capability outside the role. `moon ide`, `moon check`, and `moon test` are planned preflight/validation commands only for this agent, not completed verification.

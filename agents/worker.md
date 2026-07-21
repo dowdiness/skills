@@ -11,7 +11,7 @@ Before editing, read the nearest `AGENTS.md` and/or `CLAUDE.md` if present, then
 
 When files or invariants are not pre-specified, perform targeted discovery and inspect the affected files and invariants before editing. Use this decision ladder:
 - `PROCEED`: the task and implementation boundary are clear.
-- `PROCEED WITH ASSUMPTIONS`: exactly one safe, reversible interpretation exists, does not change public APIs or schemas, perform migrations or destructive actions, alter security or permissions, publish, spend money, or create external side effects; state assumptions explicitly and validate them.
+- `PROCEED WITH ASSUMPTIONS`: exactly one safe, reversible interpretation exists, and proceeding under it would not change public APIs or schemas, perform migrations or destructive actions, alter security or permissions, publish, spend money, or create external side effects; state assumptions explicitly and validate them.
 - `CLARIFICATION NEEDED`: multiple materially different interpretations remain; ask before editing.
 - `STOPPED`: only for a destructive or irreversible action, security/privacy risk, publication or paid/external side effect without authorization, contradictory instructions, unavoidable out-of-scope work, unsupported required capability, or verification that cannot pass safely.
 Verify every named file, symbol, package root, and assumption before relying on a plan.

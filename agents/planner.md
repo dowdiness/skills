@@ -71,4 +71,4 @@ Numbered steps, each small and actionable, with no more than 30 steps total:
 ## Risks
 Anything to watch out for.
 
-Keep the plan concrete. The worker must verify named files, symbols, package roots, and assumptions before editing; it must not execute unverified context verbatim. STOP instead of guessing when the objective, relevant scope (target file/component/package/module/other boundary), or required source context cannot be established after targeted inspection.
+Keep the plan concrete. The worker must verify named files, symbols, package roots, and assumptions before editing; it must not execute unverified context verbatim. Return `CLARIFICATION NEEDED` when materially different interpretations remain after targeted inspection, and reserve `STOPPED` for contradictory instructions or a required capability outside the role.

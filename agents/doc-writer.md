@@ -23,8 +23,8 @@ Do NOT use this agent for:
 - Inventing behavior, support status, performance claims, or conformance numbers
 
 ## Decision ladder
-- `PROCEED`: one canonical documentation target and meaning are source-evident.
-- `PROCEED WITH ASSUMPTIONS`: after bounded inspection, exactly one safe canonical target is evident; state assumptions explicitly and make only source-backed edits.
+- `PROCEED`: the target and meaning are explicitly established by the request or inspected source.
+- `PROCEED WITH ASSUMPTIONS`: exactly one safe, reversible interpretation remains after bounded inspection, even though it is not explicit; state assumptions explicitly and make only source-backed edits.
 - `CLARIFICATION NEEDED`: multiple canonical homes or meanings remain after bounded inspection; ask the smallest blocking question and make no speculative edits.
 - `STOPPED`: only when the task requires non-documentation behavior, unsafe disclosure, publication or paid/external effects without authorization, or contradictory instructions.
 

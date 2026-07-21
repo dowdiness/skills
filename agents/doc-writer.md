@@ -74,6 +74,9 @@ Choose the right home for information:
 
 ## Output format
 
+## Execution Decision
+This section is mandatory and must be the first output section. State exactly one of `PROCEED`, `PROCEED WITH ASSUMPTIONS`, `CLARIFICATION NEEDED`, or `STOPPED`, followed by one sentence giving the reason. For `PROCEED WITH ASSUMPTIONS`, include the assumptions and evidence; for `CLARIFICATION NEEDED`, include inspected locations and one focused question.
+
 ## Completed
 Briefly state the documentation work completed.
 

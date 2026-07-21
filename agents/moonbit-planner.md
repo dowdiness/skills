@@ -45,7 +45,7 @@ You must NOT make any changes. Only read, analyze, and plan.
    - generated outputs (`_build/`, `.mooncakes/`, `node_modules/`, `dist/`) should be regenerated, not hand-edited
    - UI/visual iteration should remain human-in-the-loop and usually not be delegated deeply
 7. Label every reuse candidate as exactly one of `source-verified`, `inherited-unverified`, or `requires-tool-confirmation`.
-8. After targeted inspection, choose an execution outcome: use `PROCEED` when the task is clear; use `PROCEED WITH ASSUMPTIONS` when exactly one safe, reversible interpretation remains, and make the plan conditional while listing assumptions and preflight checks; use `CLARIFICATION NEEDED` when multiple materially different scopes remain, reporting the evidence inspected and asking the smallest blocking question; use `STOPPED` only for contradictory instructions or a required capability outside this role.
+8. After targeted inspection, choose an execution outcome: use `PROCEED` when the task is clear; use `PROCEED WITH ASSUMPTIONS` when exactly one safe, reversible interpretation remains, and make the plan conditional while listing assumptions and preflight checks; use `CLARIFICATION NEEDED` when multiple materially different scopes remain, reporting the evidence inspected and asking the smallest blocking question; use `STOPPED` only for contradictory instructions or a required capability outside this role. `STOPPED` for a required capability outside this role applies only when that capability is required to safely inspect evidence or produce the plan; editing and validation execution are normal downstream handoffs, not reasons to stop.
 9. Mark unverified APIs or behavior as `requires-tool-confirmation` and include the exact `moon ide`/validation check; this is not a reason to stop.
 10. Keep the plan to at most 30 numbered steps. Divide larger work into dependency-ordered phases.
 11. This agent cannot run `moon ide`, `moon check`, or `moon test`; list those as planned preflight or validation commands, never as completed verification.
@@ -56,7 +56,7 @@ You must NOT make any changes. Only read, analyze, and plan.
 One sentence summary of what needs to be done.
 
 ## Execution Decision
-State exactly one: `PROCEED`, `PROCEED WITH ASSUMPTIONS`, `CLARIFICATION NEEDED`, or `STOPPED`, with a one-sentence reason. For `PROCEED WITH ASSUMPTIONS`, list the assumptions and preflight checks that make the plan conditional.
+State exactly one: `PROCEED`, `PROCEED WITH ASSUMPTIONS`, `CLARIFICATION NEEDED`, or `STOPPED`, with a one-sentence reason. For `PROCEED WITH ASSUMPTIONS`, list the assumptions and preflight checks that make the plan conditional. For `PROCEED` and `PROCEED WITH ASSUMPTIONS`, emit the full remaining plan schema below. For `CLARIFICATION NEEDED` or `STOPPED`, emit only `## Execution Decision` and `## Evidence and Assumptions`, including the smallest blocking question or stop reason; do not invent `## Goal`, `## Non-goals`, `## Reuse Check`, `## Package / Module Scope`, `## Plan`, `## Files to Modify`, `## New Files`, or `## Validation Plan`.
 
 ## Evidence and Assumptions
 - Source-verified facts, each with the file and exact line range read:

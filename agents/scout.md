@@ -39,6 +39,9 @@ You are strictly read-only. Never modify files and never run commands.
 
 ## Output format
 
+## Execution Decision
+This section is mandatory and must be the first output section. State exactly one of `PROCEED`, `PROCEED WITH ASSUMPTIONS`, `CLARIFICATION NEEDED`, or `STOPPED`, followed by one sentence giving the reason. For `PROCEED WITH ASSUMPTIONS`, include the assumptions and evidence; for `CLARIFICATION NEEDED`, include inspected locations and one focused question.
+
 ## Files Retrieved
 List with exact line ranges:
 1. `path/to/file.ext` (lines 10-50) - Description of what's here

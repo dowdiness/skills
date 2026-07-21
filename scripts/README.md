@@ -36,9 +36,13 @@ npm run agent-usage-report -- --help
 ```
 
 Reports contain only allowlisted agent names, invocation/runtime counts,
-conservative model IDs (ASCII alphanumeric first, then only `._/+@:-`,
-maximum 200 characters), non-negative safe-integer usage totals, explicit leaf
-durations, and matched tool-call wall time counted once as `callDurationMs`.
+currently configured agent primary and fallback model IDs, non-negative
+safe-integer usage totals, explicit leaf durations, and matched tool-call wall
+time counted once as `callDurationMs`. Model values are normalized and must
+pass the conservative syntax check and match the repository agent frontmatter;
+unknown or historical values are redacted and counted rather than retained.
+The configured set is read locally and no live model inventory or model call is
+made.
 Missing requested leaves remain unresolved evidence (`missingLeaves` and
 `runtime.unresolved`); they are not confirmed invocations or runtime failures.
 Task text, cwd, content, messages, responses, credentials, paths, and filenames

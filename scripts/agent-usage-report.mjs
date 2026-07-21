@@ -4,6 +4,7 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'node:path'
 import { EXPECTED_AGENT_NAMES } from './agent-prompt-contracts.mjs'
+import { collectConfiguredAgentModelIds, normalizeModelId } from './validate-agent-models.mjs'
 
 export const SCHEMA_VERSION = 1
 export const MAX_INPUT_FILES = 4096
@@ -65,6 +66,38 @@ const USAGE_FIELDS = Object.freeze(['input', 'output', 'cacheRead', 'cacheWrite'
 const RUNTIME_FIELDS = Object.freeze(['success', 'failure', 'aborted', 'unresolved'])
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/+@:-]{0,199}$/
 
+function normalizeTrustedModelIds(values, strict = true) {
+  if (!values || (typeof values !== 'object' && !Array.isArray(values))) {
+    throw new TypeError('invalid trusted model IDs')
+  }
+  const ids = new Set()
+  for (const value of values) {
+    if (typeof value !== 'string') throw new TypeError('invalid trusted model IDs')
+    const modelId = normalizeModelId(value)
+    if (!MODEL_ID_PATTERN.test(modelId)) {
+      if (strict) throw new TypeError('invalid trusted model IDs')
+      continue
+    }
+    ids.add(modelId)
+  }
+  return ids
+}
+
+const DEFAULT_TRUSTED_MODEL_IDS = normalizeTrustedModelIds(
+  collectConfiguredAgentModelIds().map(normalizeModelId),
+  false,
+)
+
+function trustedModelIdsFromOptions(options) {
+  if (options === undefined) return DEFAULT_TRUSTED_MODEL_IDS
+  if (options instanceof Set || Array.isArray(options)) return normalizeTrustedModelIds(options)
+  if (!options || typeof options !== 'object') throw new TypeError('invalid usage report options')
+  const keys = Object.keys(options)
+  if (keys.some((key) => key !== 'trustedModelIds')) throw new TypeError('invalid usage report options')
+  if (!Object.hasOwn(options, 'trustedModelIds')) return DEFAULT_TRUSTED_MODEL_IDS
+  return normalizeTrustedModelIds(options.trustedModelIds)
+}
+
 function emptyUsage() {
   return Object.fromEntries(USAGE_FIELDS.map((field) => [field, 0]))
 }
@@ -84,9 +117,10 @@ function emptyAgent(agent) {
   }
 }
 
-function emptyState() {
+function emptyState(trustedModelIds) {
   return {
     agents: new Map(EXPECTED_AGENT_NAMES.map((agent) => [agent, emptyAgent(agent)])),
+    trustedModelIds,
     unknownRecords: 0,
     malformedRecords: 0,
     missingLeaves: 0,
@@ -235,8 +269,14 @@ function addLeaf(state, leaf) {
   else aggregate.runtime.failure += 1
 
   if ('model' in leaf) {
-    if (typeof leaf.model === 'string' && MODEL_ID_PATTERN.test(leaf.model)) aggregate.models.add(leaf.model)
-    else state.malformedRecords += 1
+    if (typeof leaf.model !== 'string') {
+      state.malformedRecords += 1
+    } else {
+      const modelId = normalizeModelId(leaf.model)
+      if (!MODEL_ID_PATTERN.test(modelId)) state.malformedRecords += 1
+      else if (!state.trustedModelIds.has(modelId)) state.unknownRecords += 1
+      else aggregate.models.add(modelId)
+    }
   }
   if ('usage' in leaf && !addUsage(state, aggregate.usage, leaf.usage)) state.malformedRecords += 1
   if ('durationMs' in leaf) {
@@ -306,9 +346,10 @@ function finalizeAggregate(state) {
   }
 }
 
-export function aggregateSessionRecords(records) {
+export function aggregateSessionRecords(records, options) {
+  const trustedModelIds = trustedModelIdsFromOptions(options)
   const extracted = extractRecords(records)
-  const state = emptyState()
+  const state = emptyState(trustedModelIds)
   state.unknownRecords = extracted.unknownRecords
   state.malformedRecords = extracted.malformedRecords
   const matchedCallIds = new Set()
@@ -342,7 +383,8 @@ export function aggregateSessionRecords(records) {
   return finalizeAggregate(state)
 }
 
-export function aggregateSessionLines(lines) {
+export function aggregateSessionLines(lines, options) {
+  const trustedModelIds = trustedModelIdsFromOptions(options)
   const records = []
   let malformedRecords = 0
   for (const line of lines) {
@@ -353,7 +395,7 @@ export function aggregateSessionLines(lines) {
       malformedRecords += 1
     }
   }
-  const report = aggregateSessionRecords(records)
+  const report = aggregateSessionRecords(records, { trustedModelIds })
   report.malformedRecords += malformedRecords
   return report
 }
@@ -379,15 +421,22 @@ function mergeAgent(state, source) {
   mergeCounter(state, target, 'durationMs', source.durationMs)
   if (Array.isArray(source.models)) {
     for (const model of source.models) {
-      if (typeof model === 'string' && MODEL_ID_PATTERN.test(model)) target.models.add(model)
-      else state.malformedRecords += 1
+      if (typeof model !== 'string') {
+        state.malformedRecords += 1
+        continue
+      }
+      const modelId = normalizeModelId(model)
+      if (!MODEL_ID_PATTERN.test(modelId)) state.malformedRecords += 1
+      else if (!state.trustedModelIds.has(modelId)) state.unknownRecords += 1
+      else target.models.add(modelId)
     }
   } else if (source.models !== undefined) state.malformedRecords += 1
 }
 
 /** Merge aggregate-only reports without exposing or re-correlating session records. */
-export function mergeUsageReports(reports) {
-  const state = emptyState()
+export function mergeUsageReports(reports, options) {
+  const trustedModelIds = trustedModelIdsFromOptions(options)
+  const state = emptyState(trustedModelIds)
   if (!Array.isArray(reports)) {
     state.malformedRecords += 1
     return finalizeAggregate(state)
@@ -450,6 +499,8 @@ export function helpText() {
     'Privacy boundary: task, cwd, content, messages, response text, credentials, paths, and filenames are omitted.',
     'Missing requested leaves remain unresolved evidence; they are not counted as invocations or runtime failures.',
     'Per-agent duration uses only explicit leaf durationMs; matched tool-call wall time is counted once as totals.callDurationMs.',
+    'Models are emitted only for currently configured agent primary/fallback IDs; unknown or historical values are redacted and counted.',
+    'Configured model IDs come from repository agent frontmatter; no live model inventory or model call occurs.',
     'Static prompt checks are shape checks, not behavioral model evaluations; this report makes no model calls.',
   ].join('\n') + '\n'
 }
@@ -530,9 +581,9 @@ export function main(argv = process.argv.slice(2)) {
     for (const path of files) {
       const bytes = readFileSync(path)
       if (bytes.byteLength > DEFAULT_INPUT_LIMITS.maxBytesPerFile) throw inputError('fileSizeLimit')
-      reports.push(aggregateSessionLines(bytes.toString('utf8').split(/\r?\n/)))
+      reports.push(aggregateSessionLines(bytes.toString('utf8').split(/\r?\n/), { trustedModelIds: DEFAULT_TRUSTED_MODEL_IDS }))
     }
-    report = mergeUsageReports(reports)
+    report = mergeUsageReports(reports, { trustedModelIds: DEFAULT_TRUSTED_MODEL_IDS })
   } catch (error) {
     console.error(`ERROR: ${formatInputError(error)}`)
     return 1

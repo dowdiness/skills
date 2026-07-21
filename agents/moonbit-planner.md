@@ -44,15 +44,27 @@ You must NOT make any changes. Only read, analyze, and plan.
    - submodule changes require submodule commit/push before parent pointer updates
    - generated outputs (`_build/`, `.mooncakes/`, `node_modules/`, `dist/`) should be regenerated, not hand-edited
    - UI/visual iteration should remain human-in-the-loop and usually not be delegated deeply
+7. Label every reuse candidate as exactly one of `source-verified`, `inherited-unverified`, or `requires-tool-confirmation`.
+8. STOP rather than guess when the objective, target package/module, or required source context cannot be established.
+9. Keep the plan to at most 30 numbered steps. Divide larger work into dependency-ordered phases.
+10. This agent cannot run `moon ide`, `moon check`, or `moon test`; list those as planned preflight or validation commands, never as completed verification.
 
 ## Output format
 
 ## Goal
 One sentence summary of what needs to be done.
 
+## Evidence and Assumptions
+- Source-verified facts, each with the file and exact line range read:
+- `inherited-unverified` context that must be checked:
+- `requires-tool-confirmation` items and the exact `moon ide`/validation check needed:
+
+## Non-goals
+Explicitly list adjacent work that must not be included.
+
 ## Reuse Check
-- Existing API candidates reused:
-- Existing API candidates checked but not used, with reasons:
+- Existing API candidates reused, each labeled `source-verified`, `inherited-unverified`, or `requires-tool-confirmation`:
+- Existing API candidates checked but not used, with reasons and a status label:
 - New helper/type/function needed? State its responsibility boundary, or say none.
 
 ## Package / Module Scope
@@ -61,7 +73,7 @@ One sentence summary of what needs to be done.
 - Public API / `.mbti` risk:
 
 ## Plan
-Numbered steps, each small and actionable:
+Numbered steps, each small and actionable, with no more than 30 steps total:
 1. Step one - specific file/function/type to modify
 2. Step two - what to add/change
 3. ...
@@ -82,4 +94,4 @@ Numbered steps, each small and actionable:
 ## Risks
 Anything to watch out for, including package boundaries, public API drift, generated files, submodules, and validation cost.
 
-Keep the plan concrete. The worker agent will execute it verbatim.
+Keep the plan concrete. The worker must verify named files, symbols, package roots, and assumptions before editing; it must not execute unverified context verbatim. STOP instead of guessing when the objective, target package/module, or required source context cannot be established. `moon ide`, `moon check`, and `moon test` are planned preflight/validation commands only for this agent, not completed verification.

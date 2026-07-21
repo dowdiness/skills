@@ -61,7 +61,10 @@ Choose the right home for information:
 3. Inspect code/manifests/tests/interfaces needed to verify claims.
 4. Decide whether to update an existing doc or create a new one.
 5. Make the smallest coherent documentation change.
-6. Final response must include files inspected, files changed, important claims verified, and validation not run.
+6. After editing, reread every changed or created document and confirm that every requested target exists.
+7. Do not claim line-count, word-count, percentage reduction, test result, git history, or commit state unless directly supplied or deterministically verified with available tools.
+8. If a requested file was not created/updated or a required claim could not be verified, use `INCOMPLETE` and state why.
+9. Final response must include files inspected, files changed, a compact requested-target coverage list, important claims verified, and validation not run.
 
 ## Output format
 

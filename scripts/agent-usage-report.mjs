@@ -488,7 +488,10 @@ export function collectJsonlFiles(paths, limits = DEFAULT_INPUT_LIMITS) {
     }
     if (info.isSymbolicLink()) throw inputError('unsupportedInput')
     if (info.isFile()) {
-      if (!directoryEntry && !path.endsWith('.jsonl')) throw inputError('nonJsonl')
+      if (!path.endsWith('.jsonl')) {
+        if (!directoryEntry) throw inputError('nonJsonl')
+        return
+      }
       if (info.size > validatedLimits.maxBytesPerFile) throw inputError('fileSizeLimit')
       if (files.length >= validatedLimits.maxFiles) throw inputError('fileCountLimit')
       files.push(path)

@@ -233,3 +233,26 @@ test('explicit non-JSONL files are rejected with a specific path-free CLI error'
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('directory scanning skips non-JSONL files and does not expose their contents or filenames', () => {
+  const root = mkdtempSync(join(tmpdir(), 'agent-usage-report-'))
+  try {
+    const jsonlPath = join(root, 'session.jsonl')
+    writeFileSync(jsonlPath, fixtureText)
+    const nonJsonlPath = join(root, 'config.yml')
+    writeFileSync(nonJsonlPath, 'API_KEY=sk-fake-secret-12345')
+
+    const files = collectJsonlFiles([root])
+    expect(files).toEqual([jsonlPath])
+
+    const cliResult = run(root)
+    expect(cliResult.status).toBe(0)
+    expect(cliResult.stdout).toContain('worker')
+    expect(cliResult.stdout).not.toContain('config.yml')
+    expect(cliResult.stdout).not.toContain('API_KEY')
+    expect(cliResult.stdout).not.toContain('sk-fake-secret-12345')
+    expect(cliResult.stderr).toBe('')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

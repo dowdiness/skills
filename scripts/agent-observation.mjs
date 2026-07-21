@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import {
   appendFileSync,
   chmodSync,
+  constants,
   closeSync,
   existsSync,
   fchmodSync,
@@ -14,9 +15,11 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  readSync,
   rmSync,
   unlinkSync,
   writeFileSync,
+  fstatSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, normalize, resolve } from 'node:path'
@@ -31,6 +34,7 @@ import {
   MAX_INPUT_FILES,
   MAX_RECURSION_DEPTH,
 } from './agent-usage-report.mjs'
+import { collectConfiguredAgentModelIds, normalizeModelId } from './validate-agent-models.mjs'
 
 export const SCHEMA_VERSION = 1
 export const INCIDENT_CATEGORIES = Object.freeze([
@@ -53,9 +57,12 @@ export const ACTIVE_POINTER_FILE = 'active-cohort.json'
 const CATEGORY_SET = new Set(INCIDENT_CATEGORIES)
 const SEVERITY_SET = new Set(INCIDENT_SEVERITIES)
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u
-const SENSITIVE_NOTE_PATTERN = /(?:\/|\\|:\/\/|\b(?:api[_ -]?key|bearer|credential|cwd|password|prompt|secret|session|task|token)\b|\b(?:sk|ghp|xox[baprs])-[A-Za-z0-9_-]+\b|\b[A-Za-z_][A-Za-z0-9_]*(?:key|token|secret|password)\s*=)/iu
+const SENSITIVE_NOTE_PATTERN = /(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\/|\\|:\/\/|\b(?:api[_ -]?key|bearer|credential|cwd|password|prompt|secret|session|task|token)\b|\b(?:sk|ghp|github_pat_|xox[baprs])-[A-Za-z0-9_-]+\b|\b(?:github_pat_|gh[pousr]_|xox[baprs]-)[A-Za-z0-9_-]+\b|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b|\b[A-Za-z_][A-Za-z0-9_]*(?:key|token|secret|password)\s*=)/iu
 const SAFE_CASE_ID_PATTERN = /^case-[a-f0-9]{18}$/
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/+@:-]{0,199}$/
+const STATE_LOCK_FILE = '.operation.lock'
+const STATE_LOCK_ERROR = 'observation operation already in progress'
 
 function defaultStateRoot() {
   return join(process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'skills-agent-observation')
@@ -72,6 +79,32 @@ export function normalizeAbsolutePath(path) {
 
 export function hashPathIdentity(path) {
   return createHash('sha256').update(normalizeAbsolutePath(path), 'utf8').digest('hex')
+}
+
+function withStateLock(stateRoot, operation) {
+  const root = normalizeAbsolutePath(stateRoot)
+  privateDirectory(root)
+  const lockPath = join(root, STATE_LOCK_FILE)
+  let fd
+  try {
+    fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+    fchmodSync(fd, 0o600)
+    fsyncSync(fd)
+  } catch (error) {
+    if (fd !== undefined) closeSync(fd)
+    if (error?.code === 'EEXIST' || error?.code === 'ELOOP') throw new Error(STATE_LOCK_ERROR)
+    throw new Error('could not lock observation state')
+  }
+  try {
+    return operation()
+  } finally {
+    try {
+      const lockInfo = lstatSync(lockPath)
+      const ownerInfo = fstatSync(fd)
+      if (lockInfo.isFile() && lockInfo.dev === ownerInfo.dev && lockInfo.ino === ownerInfo.ino) unlinkSync(lockPath)
+    } catch {}
+    closeSync(fd)
+  }
 }
 
 function privateDirectory(path) {
@@ -142,6 +175,35 @@ export function enumerateSessionFiles(sessionsDir, limits = {}) {
   return files
 }
 
+export function readSessionFile(path) {
+  let fd
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const before = fstatSync(fd)
+    if (!before.isFile() || before.isSymbolicLink()) throw new Error('session file changed during read')
+    if (before.size > MAX_FILE_BYTES) throw new Error('session file size limit exceeded')
+
+    const buffer = Buffer.alloc(MAX_FILE_BYTES + 1)
+    let total = 0
+    while (total < buffer.length) {
+      const count = readSync(fd, buffer, total, buffer.length - total, null)
+      if (count === 0) break
+      total += count
+    }
+    const after = fstatSync(fd)
+    if (!after.isFile() || after.isSymbolicLink()) throw new Error('session file changed during read')
+    if (after.size > MAX_FILE_BYTES || total > MAX_FILE_BYTES) throw new Error('session file size limit exceeded')
+    if (after.size !== before.size || total !== after.size) throw new Error('session file changed during read')
+    return buffer.subarray(0, total).toString('utf8')
+  } catch (error) {
+    if (error?.message === 'session file size limit exceeded' || error?.message === 'session file changed during read') throw error
+    if (error?.code === 'ELOOP') throw new Error('session file changed during read')
+    throw new Error('could not read session file')
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+}
+
 export function selectNewSessionFiles(files, baselineHashes) {
   const baseline = baselineHashes instanceof Set ? baselineHashes : new Set(baselineHashes)
   return files.filter((file) => !baseline.has(hashPathIdentity(file)))
@@ -206,6 +268,25 @@ function readActivePointer(stateRoot) {
   return pointer
 }
 
+function validateSnapshotArray(values, pattern, normalizeValue = (value) => value, allowEmpty = false) {
+  if (!Array.isArray(values) || (!allowEmpty && values.length === 0)) return false
+  let previous = ''
+  const seen = new Set()
+  for (const value of values) {
+    if (typeof value !== 'string' || !pattern.test(value) || normalizeValue(value) !== value
+      || seen.has(value) || (previous !== '' && previous >= value)) return false
+    seen.add(value)
+    previous = value
+  }
+  return true
+}
+
+function removeActivePointer(stateRoot, expected) {
+  const current = readActivePointer(stateRoot)
+  if (current.commit !== expected.commit || current.shortHead !== expected.shortHead) throw new Error('invalid cohort')
+  unlinkSync(activePointerPath(stateRoot))
+}
+
 function readCohort(stateRoot, repoDir) {
   const pointer = readActivePointer(stateRoot)
   const repository = {
@@ -221,11 +302,21 @@ function readCohort(stateRoot, repoDir) {
     || typeof metadata.startedAt !== 'string' || !ISO_UTC_PATTERN.test(metadata.startedAt)
     || (metadata.finishedAt !== undefined
       && (typeof metadata.finishedAt !== 'string' || !ISO_UTC_PATTERN.test(metadata.finishedAt)))
+    || !validateSnapshotArray(metadata.agentNames, /^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
+    || !validateSnapshotArray(metadata.modelIds, MODEL_ID_PATTERN, normalizeModelId, true)
     || !Array.isArray(baseline?.identities)
     || baseline.identities.some((value) => typeof value !== 'string' || !/^[a-f0-9]{64}$/u.test(value))) {
     throw new Error('invalid cohort')
   }
-  return { repository, pointer, directory, metadata, baselineHashes: new Set(baseline.identities) }
+  return {
+    repository,
+    pointer,
+    directory,
+    metadata,
+    baselineHashes: new Set(baseline.identities),
+    agentNames: new Set(metadata.agentNames),
+    trustedModelIds: new Set(metadata.modelIds),
+  }
 }
 
 function ensureActivePointerAbsent(stateRoot) {
@@ -255,8 +346,8 @@ function createActivePointer(stateRoot, pointer) {
     temporaryCreated = true
     // A hard link makes activation exclusive without replacing another cohort's pointer.
     linkSync(temporary, path)
-    unlinkSync(temporary)
     temporaryCreated = false
+    try { unlinkSync(temporary) } catch {}
   } catch (error) {
     if (temporaryCreated) {
       try { unlinkSync(temporary) } catch {}
@@ -266,12 +357,27 @@ function createActivePointer(stateRoot, pointer) {
   }
 }
 
-export function createCohort({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
+function cohortSnapshots() {
+  let agentNames
+  let modelIds
+  try {
+    agentNames = [...packagedAgentNames()].sort()
+    modelIds = [...new Set(collectConfiguredAgentModelIds()
+      .map(normalizeModelId)
+      .filter((modelId) => MODEL_ID_PATTERN.test(modelId)))].sort()
+  } catch {
+    throw new Error('could not validate agent')
+  }
+  return { agentNames, modelIds }
+}
+
+function createCohortUnlocked({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
   ensureActivePointerAbsent(stateRoot)
   const repository = repositoryState(repoDir)
   const directory = cohortDirectory(stateRoot, repository.shortHead)
   ensureCohortAbsent(directory)
   const files = enumerateSessionFiles(sessionsDir)
+  const snapshots = cohortSnapshots()
   const identities = [...new Set(files.map(hashPathIdentity))].sort()
   let cohortCreated = false
   try {
@@ -284,6 +390,8 @@ export function createCohort({ stateRoot, sessionsDir, repoDir, now = new Date()
       commit: repository.commit,
       shortHead: repository.shortHead,
       startedAt: now.toISOString(),
+      agentNames: snapshots.agentNames,
+      modelIds: snapshots.modelIds,
     }, null, 2)}\n`, { exclusive: true })
     privateFile(join(directory, BASELINE_FILE), `${JSON.stringify({
       schemaVersion: SCHEMA_VERSION,
@@ -316,6 +424,10 @@ function packagedAgentNames() {
   }
 }
 
+export function createCohort(options) {
+  return withStateLock(options.stateRoot, () => createCohortUnlocked(options))
+}
+
 export function validateIncident(input, agentNames = packagedAgentNames()) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid incident')
   const { agent, category, severity, note } = input
@@ -333,9 +445,9 @@ function caseId() {
   return `case-${randomBytes(9).toString('hex')}`
 }
 
-export function appendIncident({ stateRoot, repoDir, incident, now = new Date() }) {
+function appendIncidentUnlocked({ stateRoot, repoDir, incident, now = new Date() }) {
   const cohort = readCohort(stateRoot, repoDir)
-  const validated = validateIncident(incident)
+  const validated = validateIncident(incident, cohort.agentNames)
   const id = caseId()
   const timestamp = now.toISOString()
   const line = [id, timestamp, validated.agent, validated.category, validated.severity, validated.note].join('\t') + '\n'
@@ -343,14 +455,14 @@ export function appendIncident({ stateRoot, repoDir, incident, now = new Date() 
   return { id, timestamp, ...validated }
 }
 
-export function finishCohort({ stateRoot, repoDir, now = new Date() }) {
+function finishCohortUnlocked({ stateRoot, repoDir, now = new Date() }) {
   const cohort = readCohort(stateRoot, repoDir)
   const finishedAt = now.toISOString()
   privateFile(join(cohort.directory, METADATA_FILE), `${JSON.stringify({
     ...cohort.metadata,
     finishedAt,
   }, null, 2)}\n`)
-  unlinkSync(activePointerPath(stateRoot))
+  removeActivePointer(stateRoot, cohort.pointer)
   return {
     commit: cohort.metadata.commit,
     shortHead: cohort.metadata.shortHead,
@@ -359,21 +471,43 @@ export function finishCohort({ stateRoot, repoDir, now = new Date() }) {
   }
 }
 
+export function appendIncident(options) {
+  return withStateLock(options.stateRoot, () => appendIncidentUnlocked(options))
+}
+
+export function finishCohort(options) {
+  return withStateLock(options.stateRoot, () => finishCohortUnlocked(options))
+}
+
 function aggregateSummary(report, fileCount) {
   const runtime = report.totals.runtime
   return `aggregate summary: files=${fileCount} invocations=${report.totals.invocations} success=${runtime.success} failure=${runtime.failure} aborted=${runtime.aborted} unresolved=${runtime.unresolved}`
 }
 
-export function runReport({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
+function clearStaleAggregate(directory) {
+  try {
+    unlinkSync(join(directory, REPORT_FILE))
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw new Error('invalid aggregate report')
+  }
+}
+
+function runReportUnlocked({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
   const cohort = readCohort(stateRoot, repoDir)
   const files = enumerateSessionFiles(sessionsDir)
   const newFiles = selectNewSessionFiles(files, cohort.baselineHashes)
-  if (newFiles.length === 0) return { ...cohort, files, newFiles, report: null }
+  if (newFiles.length === 0) {
+    clearStaleAggregate(cohort.directory)
+    return { ...cohort, files, newFiles, report: null }
+  }
 
   // The baseline is immutable. Re-read every current cohort-created file so reports
   // remain cumulative and a file observed while it was still being written is never lost.
-  const reports = newFiles.map((file) => aggregateSessionLines(readFileSync(file, 'utf8').split(/\r?\n/)))
-  const report = mergeUsageReports(reports)
+  const reports = newFiles.map((file) => aggregateSessionLines(
+    readSessionFile(file).split(/\r?\n/),
+    { trustedModelIds: cohort.trustedModelIds },
+  ))
+  const report = mergeUsageReports(reports, { trustedModelIds: cohort.trustedModelIds })
   privateFile(join(cohort.directory, REPORT_FILE), `${JSON.stringify({
     schemaVersion: SCHEMA_VERSION,
     generatedAt: now.toISOString(),
@@ -381,6 +515,10 @@ export function runReport({ stateRoot, sessionsDir, repoDir, now = new Date() })
     aggregate: report,
   }, null, 2)}\n`)
   return { ...cohort, files, newFiles, report }
+}
+
+export function runReport(options) {
+  return withStateLock(options.stateRoot, () => runReportUnlocked(options))
 }
 
 function safeCounter(value) {
@@ -404,13 +542,15 @@ function incidentCounts(path) {
   return counts
 }
 
-export function statusSnapshot({ stateRoot, sessionsDir, repoDir }) {
+function statusSnapshotUnlocked({ stateRoot, sessionsDir, repoDir }) {
   const cohort = readCohort(stateRoot, repoDir)
   const files = enumerateSessionFiles(sessionsDir)
   const newFiles = selectNewSessionFiles(files, cohort.baselineHashes)
   let latest = null
   const reportPath = join(cohort.directory, REPORT_FILE)
-  if (existsSync(reportPath)) {
+  if (newFiles.length === 0) {
+    clearStaleAggregate(cohort.directory)
+  } else if (existsSync(reportPath)) {
     const persisted = readJson(reportPath, 'invalid aggregate report')
     if (persisted?.schemaVersion !== SCHEMA_VERSION || !persisted.aggregate) throw new Error('invalid aggregate report')
     latest = persisted.aggregate
@@ -428,6 +568,10 @@ export function statusSnapshot({ stateRoot, sessionsDir, repoDir }) {
     } : null,
     incidents: incidentCounts(join(cohort.directory, INCIDENT_FILE)),
   }
+}
+
+export function statusSnapshot(options) {
+  return withStateLock(options.stateRoot, () => statusSnapshotUnlocked(options))
 }
 
 export function parseArgs(argv) {
@@ -467,6 +611,8 @@ export function helpText() {
     'incident requires --agent NAME --category CATEGORY --severity low|medium|high --note TEXT.',
     'status prints cohort metadata, aggregate runtime counts, and incident category counts without paths or notes.',
     'finish records a UTC finish time and deactivates the cohort; finish before starting another cohort.',
+    'Operations use an exclusive state-root-local lock; a live or stale lock fails closed without removing it.',
+    'start snapshots the sorted packaged agent names and normalized configured model IDs; later validation and aggregation use that snapshot even after HEAD drift.',
     'Options: --state-root DIR --sessions-dir DIR --repo-dir DIR.',
     'No model calls, live model inventory, network access, or writes to the sessions directory are performed.',
   ].join('\n') + '\n'
@@ -508,7 +654,8 @@ function runCli(argv) {
     const allowed = new Set([
       'command required', 'unknown command', 'invalid options', 'repository worktree must be clean',
       'could not inspect repository', 'cohort already exists', 'active cohort exists', 'could not create cohort', 'cohort not found',
-      'invalid cohort', 'invalid sessions directory', 'could not inspect sessions', 'session file size limit exceeded',
+      'observation operation already in progress', 'could not lock observation state', 'invalid cohort', 'invalid sessions directory',
+      'could not inspect sessions', 'session file size limit exceeded', 'session file changed during read', 'could not read session file',
       'session file count limit exceeded', 'session directory depth limit exceeded', 'invalid incident agent',
       'invalid incident category', 'invalid incident severity', 'invalid incident note', 'invalid incident',
       'could not validate agent', 'could not read incident storage', 'invalid aggregate report',

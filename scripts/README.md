@@ -71,20 +71,27 @@ npm run agent-observation -- finish
 `$XDG_STATE_HOME/skills-agent-observation/<short-head>` (or
 `~/.local/state/skills-agent-observation/<short-head>`). It stores the full
 commit and UTC start time, hashes of existing normalized absolute JSONL paths,
+a sorted snapshot of packaged agent names and normalized configured model IDs,
 an empty incident store, and an active pointer; it does not read or copy
-session content. Only one cohort can be active, and a same-commit cohort
-remains non-overwritable after `finish`. `report` should be run only after Pi
-exits. It considers every current JSONL file whose normalized path was absent
-from the original baseline, and cumulatively re-aggregates those files on every
-run without changing the baseline. Thus `status.newFileCount` is the total
-current cohort-created file count, including files already reported. The
-active pointer keeps report/status/incident tied to the original cohort even if
-Git HEAD later changes. `finish` records a UTC `finishedAt` in metadata, removes
-the active pointer, and must be run before starting another cohort. After
-finish, report/status/incident fail with `cohort not found`. `status` shows only
+session content. Every start/report/incident/status/finish operation takes an
+exclusive lock in the state root and always releases its own lock in `finally`.
+Existing locks fail closed; the workflow never silently removes a live or stale
+lock. Only one cohort can be active, and a same-commit cohort remains
+non-overwritable after `finish`. `report` should be run only after Pi exits. It
+considers every current JSONL file whose normalized path was absent from the
+original baseline, and cumulatively re-aggregates those files on every run
+without changing the baseline. Thus `status.newFileCount` is the total current
+cohort-created file count, including files already reported. If all such files
+are removed, a stale `latest-report.json` is cleared so status cannot show old
+counts with zero current files. The active pointer keeps report/status/incident
+tied to the original cohort even if Git HEAD later changes; incident names and
+trusted model IDs also use the start snapshot rather than current checkout
+configuration. `finish` records a UTC `finishedAt` in metadata, removes the
+active pointer, and must be run before starting another cohort. After finish,
+report/status/incident fail with `cohort not found`. `status` shows only
 commit/time, counts, and aggregate runtime fields. Incident notes are bounded
-single-line operator notes; do not put task text, paths, cwd, credentials, or
-other identifying details in them. Valid categories are
+single-line operator notes; do not put task text, paths, cwd, credentials,
+email addresses, tokens, or other identifying details in them. Valid categories are
 `false_clarification`, `false_stop`, `unsafe_proceed`, `wrong_route`,
 `false_complete`, `rework`, and `good_assumption`.
 

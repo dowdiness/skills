@@ -1,10 +1,11 @@
 import { expect, test } from 'bun:test'
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { ACTIVE_POINTER_FILE, hashPathIdentity, enumerateSessionFiles, helpText } from './agent-observation.mjs'
+import { ACTIVE_POINTER_FILE, hashPathIdentity, enumerateSessionFiles, helpText, readSessionFile } from './agent-observation.mjs'
+import { MAX_FILE_BYTES } from './agent-usage-report.mjs'
 
 const repositoryRoot = resolve(new URL('..', import.meta.url).pathname)
 const script = resolve(repositoryRoot, 'scripts/agent-observation.mjs')
@@ -41,6 +42,13 @@ function session(path, agent = 'worker') {
   writeFileSync(path, JSON.stringify({ message: { toolName: 'subagent', details: { results: [{ agent, exitCode: 0 }] } } }) + '\n')
 }
 
+function sessionWithModel(path, model, agent = 'worker') {
+  writeFileSync(path, [
+    { content: [{ type: 'toolCall', name: 'subagent', id: 'call-1', arguments: { agent } }] },
+    { message: { toolName: 'subagent', toolCallId: 'call-1', details: { results: [{ agent, model, exitCode: 0 }] } } },
+  ].map((record) => JSON.stringify(record)).join('\n') + '\n')
+}
+
 function cleanup(fixture) {
   rmSync(fixture.root, { recursive: true, force: true })
 }
@@ -48,6 +56,8 @@ function cleanup(fixture) {
 test('help documents the active cohort finish lifecycle', () => {
   expect(helpText()).toContain('<start|report|incident|status|finish>')
   expect(helpText()).toContain('finish records a UTC finish time')
+  expect(helpText()).toContain('exclusive state-root-local lock')
+  expect(helpText()).toContain('snapshots the sorted packaged agent names')
 })
 
 test('start is private, content-free, mode-safe, and refuses overwrite or dirty repositories', () => {
@@ -145,6 +155,67 @@ test('baseline stays immutable and reports are cumulative for current cohort-cre
   cleanup(fixture)
 })
 
+test('an existing operation lock blocks mutation and leaves the active pointer and cohort intact', () => {
+  const fixture = fixtureRepo()
+  expect(run(...args(fixture, 'start')).status).toBe(0)
+  const pointerPath = join(fixture.state, ACTIVE_POINTER_FILE)
+  const cohort = join(fixture.state, fixture.shortHead)
+  const pointerBefore = readFileSync(pointerPath, 'utf8')
+  const metadataBefore = readFileSync(join(cohort, 'metadata.json'), 'utf8')
+  writeFileSync(join(fixture.state, '.operation.lock'), 'another live operation')
+  const blocked = run(...args(fixture, 'finish'))
+  expect(blocked.status).toBe(1)
+  expect(blocked.stderr).toContain('observation operation already in progress')
+  expect(readFileSync(pointerPath, 'utf8')).toBe(pointerBefore)
+  expect(readFileSync(join(cohort, 'metadata.json'), 'utf8')).toBe(metadataBefore)
+  rmSync(join(fixture.state, '.operation.lock'))
+  expect(run(...args(fixture, 'finish')).status).toBe(0)
+  cleanup(fixture)
+})
+
+test('stale aggregate state is cleared when cohort-created files are removed', () => {
+  const fixture = fixtureRepo()
+  expect(run(...args(fixture, 'start')).status).toBe(0)
+  const created = join(fixture.sessions, 'created.jsonl')
+  session(created)
+  expect(run(...args(fixture, 'report')).status).toBe(0)
+  const reportPath = join(fixture.state, fixture.shortHead, 'latest-report.json')
+  expect(statSync(reportPath).isFile()).toBe(true)
+  rmSync(created)
+  const status = run(...args(fixture, 'status'))
+  expect(status.status).toBe(0)
+  expect(status.stdout).toContain('new session files=0')
+  expect(status.stdout).toContain('latest aggregate: none')
+  expect(() => statSync(reportPath)).toThrow()
+  cleanup(fixture)
+})
+
+test('start snapshots agent names and model IDs for later validation and aggregation', () => {
+  const fixture = fixtureRepo()
+  expect(run(...args(fixture, 'start')).status).toBe(0)
+  const cohort = join(fixture.state, fixture.shortHead)
+  const metadata = JSON.parse(readFileSync(join(cohort, 'metadata.json'), 'utf8'))
+  expect(metadata.agentNames).toEqual([...metadata.agentNames].sort())
+  expect(metadata.modelIds).toEqual([...metadata.modelIds].sort())
+  expect(metadata.agentNames).toContain('worker')
+  const snapshotModel = metadata.modelIds[0]
+  const accepted = run(...args(fixture, 'incident', ['--agent', 'worker', '--category', 'good_assumption', '--severity', 'low', '--note', '日本語の短いメモ']))
+  expect(accepted.status).toBe(0)
+  const rejected = run(...args(fixture, 'incident', ['--agent', 'new-agent-from-current-checkout', '--category', 'rework', '--severity', 'low', '--note', 'short note']))
+  expect(rejected.status).toBe(1)
+  expect(rejected.stderr).toContain('invalid incident agent')
+  sessionWithModel(join(fixture.sessions, 'snapshot.jsonl'), snapshotModel)
+  sessionWithModel(join(fixture.sessions, 'drift.jsonl'), 'model-that-was-not-snapshotted')
+  const report = run(...args(fixture, 'report'))
+  expect(report.status).toBe(0)
+  expect(report.stdout).toContain('aggregate summary: files=2 invocations=2')
+  const persisted = JSON.parse(readFileSync(join(cohort, 'latest-report.json'), 'utf8')).aggregate
+  const worker = persisted.agents.find((agent) => agent.agent === 'worker')
+  expect(worker.models).toEqual([snapshotModel])
+  expect(persisted.unknownRecords).toBeGreaterThan(0)
+  cleanup(fixture)
+})
+
 test('finish records metadata, removes activation, and prevents same-commit overwrite', () => {
   const fixture = fixtureRepo()
   expect(run(...args(fixture, 'start')).status).toBe(0)
@@ -194,6 +265,24 @@ test('active cohort follows its pointer across a clean commit drift', () => {
   cleanup(fixture)
 })
 
+test('session reads reject symlinks and enforce the bounded descriptor read', () => {
+  const fixture = fixtureRepo()
+  const target = join(fixture.sessions, 'target.jsonl')
+  const link = join(fixture.sessions, 'linked.jsonl')
+  writeFileSync(target, 'private target content\n')
+  try {
+    symlinkSync(target, link)
+    expect(() => readSessionFile(link)).toThrow('session file changed during read')
+  } catch (error) {
+    if (error?.code !== 'EPERM') throw error
+  }
+  const oversized = join(fixture.sessions, 'oversized.jsonl')
+  writeFileSync(oversized, '')
+  truncateSync(oversized, MAX_FILE_BYTES + 1)
+  expect(() => readSessionFile(oversized)).toThrow('session file size limit exceeded')
+  cleanup(fixture)
+})
+
 test('symlinks and non-JSONL files are ignored during session enumeration', () => {
   const fixture = fixtureRepo()
   const regular = join(fixture.sessions, 'regular.jsonl')
@@ -226,7 +315,16 @@ test('incident validation and status expose only bounded aggregates', () => {
     expect(invalid.stderr).not.toContain('not-a-category')
     expect(invalid.stderr).not.toContain('critical')
   }
-  for (const note of ['line\nbreak', 'A'.repeat(241), 'API_KEY=do-not-store']) {
+  for (const note of [
+    'line\nbreak',
+    'A'.repeat(241),
+    'API_KEY=do-not-store',
+    'contact test@example.com',
+    'jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturevalue123',
+    'github_pat_11AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    'AWS AKIAIOSFODNN7EXAMPLE',
+    'Google AIzaSyA123456789012345678901234567890',
+  ]) {
     const invalid = run(...args(fixture, 'incident', ['--agent', 'worker', '--category', 'rework', '--severity', 'medium', '--note', note]))
     expect(invalid.status).toBe(1)
     expect(invalid.stderr).toContain('invalid incident note')

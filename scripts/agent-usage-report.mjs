@@ -6,9 +6,59 @@ import { join, resolve } from 'node:path'
 import { EXPECTED_AGENT_NAMES } from './agent-prompt-contracts.mjs'
 
 export const SCHEMA_VERSION = 1
-export const MAX_INPUT_FILES = 512
+export const MAX_INPUT_FILES = 4096
 export const MAX_RECURSION_DEPTH = 16
-export const MAX_FILE_BYTES = 10 * 1024 * 1024
+export const MAX_FILE_BYTES = 64 * 1024 * 1024
+export const DEFAULT_INPUT_LIMITS = Object.freeze({
+  maxFiles: MAX_INPUT_FILES,
+  maxBytesPerFile: MAX_FILE_BYTES,
+  maxDepth: MAX_RECURSION_DEPTH,
+})
+
+const INPUT_ERROR_MESSAGES = Object.freeze({
+  fileCountLimit: 'input file count limit exceeded',
+  fileSizeLimit: 'input file size limit exceeded',
+  depthLimit: 'input directory depth limit exceeded',
+  unsupportedInput: 'unsupported input',
+  nonJsonl: 'non-JSONL explicit input rejected; expected a .jsonl file',
+  noFiles: 'no input files',
+})
+
+class InputError extends Error {
+  constructor(code) {
+    super(INPUT_ERROR_MESSAGES[code])
+    this.name = 'InputError'
+    this.code = code
+  }
+}
+
+function inputError(code) {
+  return new InputError(code)
+}
+
+export function formatInputError(error) {
+  if (error?.name === 'InputError' && Object.hasOwn(INPUT_ERROR_MESSAGES, error.code)) {
+    return INPUT_ERROR_MESSAGES[error.code]
+  }
+  return 'could not read explicit JSONL input'
+}
+
+function validateInputLimits(limits) {
+  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
+    throw new TypeError('invalid input limits')
+  }
+  const keys = Object.keys(limits)
+  if (keys.some((key) => !Object.hasOwn(DEFAULT_INPUT_LIMITS, key))) {
+    throw new TypeError('invalid input limits')
+  }
+  const normalized = { ...DEFAULT_INPUT_LIMITS, ...limits }
+  if (!Number.isSafeInteger(normalized.maxFiles) || normalized.maxFiles < 1
+    || !Number.isSafeInteger(normalized.maxBytesPerFile) || normalized.maxBytesPerFile < 0
+    || !Number.isSafeInteger(normalized.maxDepth) || normalized.maxDepth < 0) {
+    throw new TypeError('invalid input limits')
+  }
+  return Object.freeze(normalized)
+}
 
 const AGENT_NAMES = new Set(EXPECTED_AGENT_NAMES)
 const USAGE_FIELDS = Object.freeze(['input', 'output', 'cacheRead', 'cacheWrite', 'contextTokens', 'turns'])
@@ -396,7 +446,7 @@ export function helpText() {
     '',
     'Reads only the explicitly supplied JSONL files or directories and emits aggregate runtime evidence.',
     'Default with no paths: print this help and exit 0; no home-directory scan is performed.',
-    `Input limits: at most ${MAX_INPUT_FILES} JSONL files, directory depth ${MAX_RECURSION_DEPTH}, and ${MAX_FILE_BYTES} bytes per file; symlinks are rejected.`,
+    `Input limits: at most ${MAX_INPUT_FILES} JSONL files, directory depth ${MAX_RECURSION_DEPTH}, and ${MAX_FILE_BYTES} bytes (64 MiB) per file; symlinks are rejected.`,
     'Privacy boundary: task, cwd, content, messages, response text, credentials, paths, and filenames are omitted.',
     'Missing requested leaves remain unresolved evidence; they are not counted as invocations or runtime failures.',
     'Per-agent duration uses only explicit leaf durationMs; matched tool-call wall time is counted once as totals.callDurationMs.',
@@ -426,7 +476,8 @@ export function parseArgs(argv) {
   return { format, paths, help }
 }
 
-export function collectJsonlFiles(paths) {
+export function collectJsonlFiles(paths, limits = DEFAULT_INPUT_LIMITS) {
+  const validatedLimits = validateInputLimits(limits)
   const files = []
   const visit = (path, directoryEntry, depth) => {
     let info
@@ -435,15 +486,14 @@ export function collectJsonlFiles(paths) {
     } catch {
       throw new Error('could not read explicit JSONL input')
     }
-    if (info.isSymbolicLink()) throw new Error('unsupported input')
+    if (info.isSymbolicLink()) throw inputError('unsupportedInput')
     if (info.isFile()) {
-      if ((!directoryEntry || path.endsWith('.jsonl'))) {
-        if (info.size > MAX_FILE_BYTES) throw new Error('input file size limit exceeded')
-        if (files.length >= MAX_INPUT_FILES) throw new Error('input file count limit exceeded')
-        files.push(path)
-      }
+      if (!directoryEntry && !path.endsWith('.jsonl')) throw inputError('nonJsonl')
+      if (info.size > validatedLimits.maxBytesPerFile) throw inputError('fileSizeLimit')
+      if (files.length >= validatedLimits.maxFiles) throw inputError('fileCountLimit')
+      files.push(path)
     } else if (info.isDirectory()) {
-      if (depth > MAX_RECURSION_DEPTH) throw new Error('input directory depth limit exceeded')
+      if (depth > validatedLimits.maxDepth) throw inputError('depthLimit')
       let entries
       try {
         entries = readdirSync(path).sort()
@@ -451,10 +501,10 @@ export function collectJsonlFiles(paths) {
         throw new Error('could not read explicit JSONL input')
       }
       for (const entry of entries) visit(join(path, entry), true, depth + 1)
-    } else throw new Error('unsupported input')
+    } else throw inputError('unsupportedInput')
   }
   for (const path of paths) visit(path, false, 0)
-  if (files.length === 0) throw new Error('no input files')
+  if (files.length === 0) throw inputError('noFiles')
   return files
 }
 
@@ -472,16 +522,16 @@ export function main(argv = process.argv.slice(2)) {
   }
   let report
   try {
-    const files = collectJsonlFiles(options.paths)
+    const files = collectJsonlFiles(options.paths, DEFAULT_INPUT_LIMITS)
     const reports = []
     for (const path of files) {
       const bytes = readFileSync(path)
-      if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('input file size limit exceeded')
+      if (bytes.byteLength > DEFAULT_INPUT_LIMITS.maxBytesPerFile) throw inputError('fileSizeLimit')
       reports.push(aggregateSessionLines(bytes.toString('utf8').split(/\r?\n/)))
     }
     report = mergeUsageReports(reports)
-  } catch {
-    console.error('ERROR: could not read explicit JSONL input')
+  } catch (error) {
+    console.error(`ERROR: ${formatInputError(error)}`)
     return 1
   }
   process.stdout.write(formatReport(report, options.format))

@@ -1,12 +1,14 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import {
   aggregateSessionLines,
   collectJsonlFiles,
+  formatInputError,
   formatReport,
+  DEFAULT_INPUT_LIMITS,
   MAX_FILE_BYTES,
   MAX_INPUT_FILES,
   MAX_RECURSION_DEPTH,
@@ -170,37 +172,63 @@ test('call wall time is counted once while leaf durations remain per-agent', () 
   expect(report.agents.find((item) => item.agent === 'worker').durationMs).toBe(17)
 })
 
-test('explicit input processing is bounded and rejects symlinks without pathful errors', () => {
+test('defaults cover the observed session corpus and injected limits bound collection', () => {
+  expect(MAX_INPUT_FILES).toBeGreaterThanOrEqual(668)
+  expect(MAX_FILE_BYTES).toBeGreaterThan(35.6 * 1024 * 1024)
+  expect(DEFAULT_INPUT_LIMITS).toEqual({ maxFiles: MAX_INPUT_FILES, maxBytesPerFile: MAX_FILE_BYTES, maxDepth: MAX_RECURSION_DEPTH })
+
   const root = mkdtempSync(join(tmpdir(), 'agent-usage-report-'))
+  const limits = { maxFiles: 2, maxBytesPerFile: 4, maxDepth: 2 }
   try {
     const countDir = join(root, 'count')
     mkdirSync(countDir)
-    for (let index = 0; index <= MAX_INPUT_FILES; index += 1) writeFileSync(join(countDir, `${index}.jsonl`), '')
-    expect(() => collectJsonlFiles([countDir])).toThrow('input file count limit exceeded')
+    for (let index = 0; index <= limits.maxFiles; index += 1) writeFileSync(join(countDir, `${index}.jsonl`), '')
+    expect(() => collectJsonlFiles([countDir], limits)).toThrow('input file count limit exceeded')
+    try {
+      collectJsonlFiles([countDir], limits)
+    } catch (error) {
+      expect(formatInputError(error)).toBe('input file count limit exceeded')
+      expect(formatInputError(error)).not.toContain(root)
+    }
 
     const depthDir = join(root, 'depth')
     let current = depthDir
     mkdirSync(current)
-    for (let index = 0; index <= MAX_RECURSION_DEPTH; index += 1) {
+    for (let index = 0; index <= limits.maxDepth; index += 1) {
       current = join(current, 'nested')
       mkdirSync(current)
     }
-    expect(() => collectJsonlFiles([depthDir])).toThrow('input directory depth limit exceeded')
+    expect(() => collectJsonlFiles([depthDir], limits)).toThrow('input directory depth limit exceeded')
 
     const large = join(root, 'large.jsonl')
-    writeFileSync(large, '')
-    truncateSync(large, MAX_FILE_BYTES + 1)
-    expect(() => collectJsonlFiles([large])).toThrow('input file size limit exceeded')
+    writeFileSync(large, '12345')
+    expect(() => collectJsonlFiles([large], limits)).toThrow('input file size limit exceeded')
+    expect(() => collectJsonlFiles([large], { maxFiles: 0 })).toThrow('invalid input limits')
 
     const target = join(root, 'target.jsonl')
     writeFileSync(target, '')
     const link = join(root, 'link.jsonl')
     try {
       symlinkSync(target, link)
-      expect(() => collectJsonlFiles([link])).toThrow('unsupported input')
+      expect(() => collectJsonlFiles([link], limits)).toThrow('unsupported input')
     } catch (error) {
       if (error?.code !== 'EPERM') throw error
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('explicit non-JSONL files are rejected with a specific path-free CLI error', () => {
+  const root = mkdtempSync(join(tmpdir(), 'agent-usage-report-'))
+  const nonJsonl = join(root, 'private.txt')
+  try {
+    writeFileSync(nonJsonl, 'not a session')
+    const result = run(nonJsonl)
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('non-JSONL explicit input rejected')
+    expect(result.stderr).not.toContain(root)
+    expect(result.stderr).not.toContain('private.txt')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

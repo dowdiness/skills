@@ -43,8 +43,9 @@ Missing requested leaves remain unresolved evidence (`missingLeaves` and
 `runtime.unresolved`); they are not confirmed invocations or runtime failures.
 Task text, cwd, content, messages, responses, credentials, paths, and filenames
 are omitted. Each explicit file is correlated independently before aggregate-only
-reports are merged. Processing is bounded to 512 JSONL files, directory depth
-16, and 10 MiB per file; symlinks are not followed. Human delegation outcomes
+reports are merged. Processing is bounded to 4096 JSONL files, directory depth 16, and
+67108864 bytes (64 MiB) per file; symlinks are not followed. Explicit regular
+file inputs must use the `.jsonl` extension; non-JSONL files are rejected. Human delegation outcomes
 are not merged into runtime success or failure. Keep real session data out of the
 repository; the checked-in fixtures are synthetic only. Live model evaluations
 remain a separately budgeted, provider-approved future facility.

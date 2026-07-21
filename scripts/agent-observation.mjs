@@ -183,17 +183,19 @@ export function readSessionFile(path) {
     if (!before.isFile() || before.isSymbolicLink()) throw new Error('session file changed during read')
     if (before.size > MAX_FILE_BYTES) throw new Error('session file size limit exceeded')
 
-    const buffer = Buffer.alloc(MAX_FILE_BYTES + 1)
+    const buffer = Buffer.alloc(before.size)
     let total = 0
-    while (total < buffer.length) {
-      const count = readSync(fd, buffer, total, buffer.length - total, null)
+    while (total < before.size) {
+      const count = readSync(fd, buffer, total, before.size - total, null)
       if (count === 0) break
       total += count
     }
+    const extra = Buffer.alloc(1)
+    const extraCount = readSync(fd, extra, 0, 1, null)
     const after = fstatSync(fd)
     if (!after.isFile() || after.isSymbolicLink()) throw new Error('session file changed during read')
-    if (after.size > MAX_FILE_BYTES || total > MAX_FILE_BYTES) throw new Error('session file size limit exceeded')
-    if (after.size !== before.size || total !== after.size) throw new Error('session file changed during read')
+    if (after.size > MAX_FILE_BYTES || total + extraCount > MAX_FILE_BYTES) throw new Error('session file size limit exceeded')
+    if (after.size !== before.size || total !== after.size || extraCount !== 0) throw new Error('session file changed during read')
     return buffer.subarray(0, total).toString('utf8')
   } catch (error) {
     if (error?.message === 'session file size limit exceeded' || error?.message === 'session file changed during read') throw error

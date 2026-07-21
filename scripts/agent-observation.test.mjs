@@ -265,6 +265,17 @@ test('active cohort follows its pointer across a clean commit drift', () => {
   cleanup(fixture)
 })
 
+test('session reads tiny and zero-length files without changing their contents', () => {
+  const fixture = fixtureRepo()
+  const tiny = join(fixture.sessions, 'tiny.jsonl')
+  const empty = join(fixture.sessions, 'empty.jsonl')
+  writeFileSync(tiny, '{"tiny":true}\n')
+  writeFileSync(empty, '')
+  expect(readSessionFile(tiny)).toBe('{"tiny":true}\n')
+  expect(readSessionFile(empty)).toBe('')
+  cleanup(fixture)
+})
+
 test('session reads reject symlinks and enforce the bounded descriptor read', () => {
   const fixture = fixtureRepo()
   const target = join(fixture.sessions, 'target.jsonl')

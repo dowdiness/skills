@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { hashPathIdentity, enumerateSessionFiles } from './agent-observation.mjs'
+import { ACTIVE_POINTER_FILE, hashPathIdentity, enumerateSessionFiles, helpText } from './agent-observation.mjs'
 
 const repositoryRoot = resolve(new URL('..', import.meta.url).pathname)
 const script = resolve(repositoryRoot, 'scripts/agent-observation.mjs')
@@ -45,6 +45,11 @@ function cleanup(fixture) {
   rmSync(fixture.root, { recursive: true, force: true })
 }
 
+test('help documents the active cohort finish lifecycle', () => {
+  expect(helpText()).toContain('<start|report|incident|status|finish>')
+  expect(helpText()).toContain('finish records a UTC finish time')
+})
+
 test('start is private, content-free, mode-safe, and refuses overwrite or dirty repositories', () => {
   const fixture = fixtureRepo()
   const active = join(fixture.sessions, 'active.jsonl')
@@ -62,12 +67,16 @@ test('start is private, content-free, mode-safe, and refuses overwrite or dirty 
   expect(started.stdout).not.toContain(fixture.root)
   expect(started.stdout).not.toContain('active.jsonl')
   const cohort = join(fixture.state, fixture.shortHead)
+  expect(statSync(fixture.state).mode & 0o777).toBe(0o700)
   expect(statSync(cohort).mode & 0o777).toBe(0o700)
+  expect(statSync(join(fixture.state, ACTIVE_POINTER_FILE)).mode & 0o777).toBe(0o600)
   for (const name of ['metadata.json', 'baseline.json', 'incidents.tsv']) {
     expect(statSync(join(cohort, name)).mode & 0o777).toBe(0o600)
   }
   const metadata = JSON.parse(readFileSync(join(cohort, 'metadata.json'), 'utf8'))
   const baseline = JSON.parse(readFileSync(join(cohort, 'baseline.json'), 'utf8'))
+  const pointer = JSON.parse(readFileSync(join(fixture.state, ACTIVE_POINTER_FILE), 'utf8'))
+  expect(pointer).toEqual({ schemaVersion: 1, commit: metadata.commit, shortHead: fixture.shortHead })
   expect(metadata.commit).toMatch(/^[0-9a-f]{40}$/)
   expect(metadata.startedAt).toMatch(/Z$/)
   expect(baseline.identities).toEqual([
@@ -80,7 +89,7 @@ test('start is private, content-free, mode-safe, and refuses overwrite or dirty 
 
   const overwrite = run(...args(fixture, 'start'))
   expect(overwrite.status).toBe(1)
-  expect(overwrite.stderr).toContain('cohort already exists')
+  expect(overwrite.stderr).toContain('active cohort exists')
   expect(overwrite.stderr).not.toContain(fixture.root)
 
   writeFileSync(join(fixture.root, 'tracked.txt'), 'dirty\n')
@@ -91,34 +100,97 @@ test('start is private, content-free, mode-safe, and refuses overwrite or dirty 
   cleanup(fixture)
 })
 
-test('baseline excludes an active file even when it changes, while new files are aggregate-only', () => {
+test('baseline stays immutable and reports are cumulative for current cohort-created files', () => {
   const fixture = fixtureRepo()
   const active = join(fixture.sessions, 'active.jsonl')
   session(active)
   expect(run(...args(fixture, 'start')).status).toBe(0)
-  writeFileSync(active, 'PRIVATE_ACTIVE_CONTENT\n')
-  const fresh = join(fixture.sessions, 'fresh.jsonl')
-  session(fresh)
-  writeFileSync(join(fixture.sessions, 'notes.txt'), 'PRIVATE_NON_JSONL\n')
-  const report = run(...args(fixture, 'report'))
-  expect(report.status).toBe(0)
-  expect(report.stdout).toContain('Agent usage report')
-  expect(report.stdout).toContain('aggregate summary: files=1 invocations=1')
-  for (const secret of ['PRIVATE_ACTIVE_CONTENT', 'PRIVATE_NON_JSONL', 'active.jsonl', 'fresh.jsonl', fixture.root]) {
-    expect(report.stdout).not.toContain(secret)
-  }
-  const persistedPath = join(fixture.state, fixture.shortHead, 'latest-report.json')
-  const persisted = JSON.parse(readFileSync(persistedPath, 'utf8'))
-  expect(persisted.aggregate.totals.invocations).toBe(1)
-  const persistedText = readFileSync(persistedPath, 'utf8')
-  expect(persistedText).not.toContain('PRIVATE_ACTIVE_CONTENT')
-  expect(persistedText).not.toContain(fixture.root)
-  expect(statSync(persistedPath).mode & 0o777).toBe(0o600)
+  const cohort = join(fixture.state, fixture.shortHead)
+  const originalBaseline = readFileSync(join(cohort, 'baseline.json'), 'utf8')
 
   const noNew = run(...args(fixture, 'report'))
   expect(noNew.status).toBe(0)
   expect(noNew.stdout).toContain('No new session files observed')
-  expect(noNew.stdout).not.toContain(fixture.root)
+  expect(run(...args(fixture, 'status')).stdout).toContain('new session files=0')
+
+  writeFileSync(active, 'PRIVATE_ACTIVE_CONTENT\n')
+  const first = join(fixture.sessions, 'fresh.jsonl')
+  session(first)
+  writeFileSync(join(fixture.sessions, 'notes.txt'), 'PRIVATE_NON_JSONL\n')
+  const firstReport = run(...args(fixture, 'report'))
+  expect(firstReport.status).toBe(0)
+  expect(firstReport.stdout).toContain('aggregate summary: files=1 invocations=1')
+  expect(firstReport.stdout).not.toContain(fixture.root)
+  expect(run(...args(fixture, 'status')).stdout).toContain('new session files=1')
+
+  const rerun = run(...args(fixture, 'report'))
+  expect(rerun.status).toBe(0)
+  expect(rerun.stdout).not.toContain('No new session files observed')
+  expect(rerun.stdout).toContain('aggregate summary: files=1 invocations=1')
+
+  const second = join(fixture.sessions, 'second.jsonl')
+  session(second)
+  const secondReport = run(...args(fixture, 'report'))
+  expect(secondReport.status).toBe(0)
+  expect(secondReport.stdout).toContain('aggregate summary: files=2 invocations=2')
+  expect(run(...args(fixture, 'status')).stdout).toContain('new session files=2')
+
+  expect(readFileSync(join(cohort, 'baseline.json'), 'utf8')).toBe(originalBaseline)
+  const persistedPath = join(cohort, 'latest-report.json')
+  const persisted = JSON.parse(readFileSync(persistedPath, 'utf8'))
+  expect(persisted.fileCount).toBe(2)
+  expect(persisted.aggregate.totals.invocations).toBe(2)
+  expect(readFileSync(persistedPath, 'utf8')).not.toContain('PRIVATE_ACTIVE_CONTENT')
+  expect(statSync(persistedPath).mode & 0o777).toBe(0o600)
+  cleanup(fixture)
+})
+
+test('finish records metadata, removes activation, and prevents same-commit overwrite', () => {
+  const fixture = fixtureRepo()
+  expect(run(...args(fixture, 'start')).status).toBe(0)
+  const finish = run(...args(fixture, 'finish'))
+  expect(finish.status).toBe(0)
+  expect(finish.stdout).toMatch(/^finished cohort commit=[0-9a-f]{40} shortHead=[0-9a-f]{12} started=.* finished=.*\n$/)
+  expect(finish.stdout).not.toContain(fixture.root)
+  expect(() => statSync(join(fixture.state, ACTIVE_POINTER_FILE))).toThrow()
+  const metadata = JSON.parse(readFileSync(join(fixture.state, fixture.shortHead, 'metadata.json'), 'utf8'))
+  expect(metadata.finishedAt).toMatch(/Z$/)
+
+  for (const command of ['status', 'report', 'incident']) {
+    const result = run(...args(fixture, command, command === 'incident'
+      ? ['--agent', 'worker', '--category', 'rework', '--severity', 'low', '--note', 'not recorded']
+      : []))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('cohort not found')
+    expect(result.stderr).not.toContain(fixture.root)
+  }
+  const sameCommit = run(...args(fixture, 'start'))
+  expect(sameCommit.status).toBe(1)
+  expect(sameCommit.stderr).toContain('cohort already exists')
+  cleanup(fixture)
+})
+
+test('active cohort follows its pointer across a clean commit drift', () => {
+  const fixture = fixtureRepo()
+  expect(run(...args(fixture, 'start')).status).toBe(0)
+  const originalCommit = git(fixture.root, 'rev-parse', 'HEAD')
+  writeFileSync(join(fixture.root, 'tracked.txt'), 'second clean commit\n')
+  git(fixture.root, 'add', 'tracked.txt')
+  git(fixture.root, 'commit', '-qm', 'fixture drift')
+  expect(git(fixture.root, 'rev-parse', 'HEAD')).not.toBe(originalCommit)
+
+  const incident = run(...args(fixture, 'incident', ['--agent', 'worker', '--category', 'good_assumption', '--severity', 'low', '--note', 'clean drift retained cohort']))
+  expect(incident.status).toBe(0)
+  session(join(fixture.sessions, 'after-drift.jsonl'))
+  const report = run(...args(fixture, 'report'))
+  expect(report.status).toBe(0)
+  expect(report.stdout).toContain('aggregate summary: files=1 invocations=1')
+  const status = run(...args(fixture, 'status'))
+  expect(status.status).toBe(0)
+  expect(status.stdout).toContain(`cohort commit=${originalCommit}`)
+  expect(status.stdout).not.toContain(git(fixture.root, 'rev-parse', 'HEAD'))
+  expect(status.stdout).toContain('good_assumption=1')
+  expect(run(...args(fixture, 'finish')).status).toBe(0)
   cleanup(fixture)
 })
 

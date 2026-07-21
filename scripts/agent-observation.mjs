@@ -8,12 +8,14 @@ import {
   existsSync,
   fchmodSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
@@ -46,6 +48,7 @@ export const BASELINE_FILE = 'baseline.json'
 export const METADATA_FILE = 'metadata.json'
 export const REPORT_FILE = 'latest-report.json'
 export const INCIDENT_FILE = 'incidents.tsv'
+export const ACTIVE_POINTER_FILE = 'active-cohort.json'
 
 const CATEGORY_SET = new Set(INCIDENT_CATEGORIES)
 const SEVERITY_SET = new Set(INCIDENT_SEVERITIES)
@@ -164,16 +167,13 @@ export function repositoryState(repoDir) {
   return { repoDir: root, commit, shortHead: commit.slice(0, 12) }
 }
 
-function currentCommit(repoDir) {
-  const root = normalizeAbsolutePath(repoDir)
-  const commit = gitOutput(root, ['rev-parse', '--verify', 'HEAD'])
-  if (!/^[0-9a-f]{40}$/u.test(commit)) throw new Error('could not inspect repository')
-  return { repoDir: root, commit, shortHead: commit.slice(0, 12) }
-}
-
 function cohortDirectory(stateRoot, shortHead) {
   if (!/^[0-9a-f]{12}$/u.test(shortHead)) throw new Error('invalid cohort')
   return join(normalizeAbsolutePath(stateRoot), shortHead)
+}
+
+function activePointerPath(stateRoot) {
+  return join(normalizeAbsolutePath(stateRoot), ACTIVE_POINTER_FILE)
 }
 
 function readJson(path, errorMessage) {
@@ -184,18 +184,57 @@ function readJson(path, errorMessage) {
   }
 }
 
+function readActivePointer(stateRoot) {
+  const path = activePointerPath(stateRoot)
+  let info
+  try {
+    info = lstatSync(path)
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error('cohort not found')
+    throw new Error('invalid cohort')
+  }
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error('invalid cohort')
+  const pointer = readJson(path, 'invalid cohort')
+  const keys = Object.keys(pointer ?? {}).sort()
+  if (keys.length !== 3 || keys.join(',') !== 'commit,schemaVersion,shortHead'
+    || pointer.schemaVersion !== SCHEMA_VERSION
+    || typeof pointer.commit !== 'string' || !/^[0-9a-f]{40}$/u.test(pointer.commit)
+    || typeof pointer.shortHead !== 'string' || !/^[0-9a-f]{12}$/u.test(pointer.shortHead)
+    || pointer.shortHead !== pointer.commit.slice(0, 12)) {
+    throw new Error('invalid cohort')
+  }
+  return pointer
+}
+
 function readCohort(stateRoot, repoDir) {
-  const repository = currentCommit(repoDir)
-  const directory = cohortDirectory(stateRoot, repository.shortHead)
+  const pointer = readActivePointer(stateRoot)
+  const repository = {
+    repoDir: normalizeAbsolutePath(repoDir),
+    commit: pointer.commit,
+    shortHead: pointer.shortHead,
+  }
+  const directory = cohortDirectory(stateRoot, pointer.shortHead)
   const metadata = readJson(join(directory, METADATA_FILE), 'cohort not found')
   const baseline = readJson(join(directory, BASELINE_FILE), 'cohort not found')
-  if (metadata?.schemaVersion !== SCHEMA_VERSION || metadata?.commit !== repository.commit
+  if (metadata?.schemaVersion !== SCHEMA_VERSION || metadata?.commit !== pointer.commit
+    || metadata?.shortHead !== pointer.shortHead
     || typeof metadata.startedAt !== 'string' || !ISO_UTC_PATTERN.test(metadata.startedAt)
+    || (metadata.finishedAt !== undefined
+      && (typeof metadata.finishedAt !== 'string' || !ISO_UTC_PATTERN.test(metadata.finishedAt)))
     || !Array.isArray(baseline?.identities)
     || baseline.identities.some((value) => typeof value !== 'string' || !/^[a-f0-9]{64}$/u.test(value))) {
     throw new Error('invalid cohort')
   }
-  return { repository, directory, metadata, baselineHashes: new Set(baseline.identities) }
+  return { repository, pointer, directory, metadata, baselineHashes: new Set(baseline.identities) }
+}
+
+function ensureActivePointerAbsent(stateRoot) {
+  try {
+    lstatSync(activePointerPath(stateRoot))
+    throw new Error('active cohort exists')
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
 }
 
 function ensureCohortAbsent(directory) {
@@ -207,15 +246,38 @@ function ensureCohortAbsent(directory) {
   }
 }
 
+function createActivePointer(stateRoot, pointer) {
+  const path = activePointerPath(stateRoot)
+  const temporary = `${path}.tmp-${randomBytes(9).toString('hex')}`
+  let temporaryCreated = false
+  try {
+    privateFile(temporary, `${JSON.stringify(pointer, null, 2)}\n`, { exclusive: true })
+    temporaryCreated = true
+    // A hard link makes activation exclusive without replacing another cohort's pointer.
+    linkSync(temporary, path)
+    unlinkSync(temporary)
+    temporaryCreated = false
+  } catch (error) {
+    if (temporaryCreated) {
+      try { unlinkSync(temporary) } catch {}
+    }
+    if (error?.code === 'EEXIST') throw new Error('active cohort exists')
+    throw error
+  }
+}
+
 export function createCohort({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
+  ensureActivePointerAbsent(stateRoot)
   const repository = repositoryState(repoDir)
   const directory = cohortDirectory(stateRoot, repository.shortHead)
   ensureCohortAbsent(directory)
   const files = enumerateSessionFiles(sessionsDir)
   const identities = [...new Set(files.map(hashPathIdentity))].sort()
+  let cohortCreated = false
   try {
     privateDirectory(dirname(directory))
     mkdirSync(directory, { mode: 0o700 })
+    cohortCreated = true
     chmodSync(directory, 0o700)
     privateFile(join(directory, METADATA_FILE), `${JSON.stringify({
       schemaVersion: SCHEMA_VERSION,
@@ -228,10 +290,18 @@ export function createCohort({ stateRoot, sessionsDir, repoDir, now = new Date()
       identities,
     }, null, 2)}\n`, { exclusive: true })
     privateFile(join(directory, INCIDENT_FILE), '', { exclusive: true })
+    // Activation is deliberately last: a visible pointer always names a complete cohort.
+    createActivePointer(stateRoot, {
+      schemaVersion: SCHEMA_VERSION,
+      commit: repository.commit,
+      shortHead: repository.shortHead,
+    })
   } catch (error) {
-    // Avoid leaving a partially-created cohort that could be mistaken for a valid baseline.
-    try { rmSync(directory, { recursive: true, force: true }) } catch {}
-    throw error instanceof Error && error.message === 'cohort already exists'
+    // Only remove the directory created by this invocation; never remove an existing cohort.
+    if (cohortCreated) {
+      try { rmSync(directory, { recursive: true, force: true }) } catch {}
+    }
+    throw error instanceof Error && ['cohort already exists', 'active cohort exists'].includes(error.message)
       ? error
       : new Error('could not create cohort')
   }
@@ -273,6 +343,22 @@ export function appendIncident({ stateRoot, repoDir, incident, now = new Date() 
   return { id, timestamp, ...validated }
 }
 
+export function finishCohort({ stateRoot, repoDir, now = new Date() }) {
+  const cohort = readCohort(stateRoot, repoDir)
+  const finishedAt = now.toISOString()
+  privateFile(join(cohort.directory, METADATA_FILE), `${JSON.stringify({
+    ...cohort.metadata,
+    finishedAt,
+  }, null, 2)}\n`)
+  unlinkSync(activePointerPath(stateRoot))
+  return {
+    commit: cohort.metadata.commit,
+    shortHead: cohort.metadata.shortHead,
+    startedAt: cohort.metadata.startedAt,
+    finishedAt,
+  }
+}
+
 function aggregateSummary(report, fileCount) {
   const runtime = report.totals.runtime
   return `aggregate summary: files=${fileCount} invocations=${report.totals.invocations} success=${runtime.success} failure=${runtime.failure} aborted=${runtime.aborted} unresolved=${runtime.unresolved}`
@@ -284,12 +370,10 @@ export function runReport({ stateRoot, sessionsDir, repoDir, now = new Date() })
   const newFiles = selectNewSessionFiles(files, cohort.baselineHashes)
   if (newFiles.length === 0) return { ...cohort, files, newFiles, report: null }
 
+  // The baseline is immutable. Re-read every current cohort-created file so reports
+  // remain cumulative and a file observed while it was still being written is never lost.
   const reports = newFiles.map((file) => aggregateSessionLines(readFileSync(file, 'utf8').split(/\r?\n/)))
   const report = mergeUsageReports(reports)
-  privateFile(join(cohort.directory, BASELINE_FILE), `${JSON.stringify({
-    schemaVersion: SCHEMA_VERSION,
-    identities: [...new Set([...cohort.baselineHashes, ...newFiles.map(hashPathIdentity)])].sort(),
-  }, null, 2)}\n`)
   privateFile(join(cohort.directory, REPORT_FILE), `${JSON.stringify({
     schemaVersion: SCHEMA_VERSION,
     generatedAt: now.toISOString(),
@@ -349,7 +433,7 @@ export function statusSnapshot({ stateRoot, sessionsDir, repoDir }) {
 export function parseArgs(argv) {
   if (!Array.isArray(argv) || argv.length === 0) throw new Error('command required')
   const command = argv[0]
-  if (!['start', 'report', 'incident', 'status'].includes(command)) throw new Error('unknown command')
+  if (!['start', 'report', 'incident', 'status', 'finish'].includes(command)) throw new Error('unknown command')
   const options = {
     stateRoot: defaultStateRoot(),
     sessionsDir: defaultSessionsDir(),
@@ -376,12 +460,13 @@ export function parseArgs(argv) {
 
 export function helpText() {
   return [
-    'Usage: npm run agent-observation -- <start|report|incident|status> [options]',
+    'Usage: npm run agent-observation -- <start|report|incident|status|finish> [options]',
     '',
-    'start records a private, hashed baseline of existing JSONL identities; run it after setup and before /clear/new session.',
-    'report is aggregate-only and should be run after pi exits; it includes only JSONL files created after start.',
+    'start records a private, immutable hashed baseline and activates one cohort; run it after setup and before /clear/new session.',
+    'report is aggregate-only and should be run after pi exits; it cumulatively includes every current JSONL file created after start.',
     'incident requires --agent NAME --category CATEGORY --severity low|medium|high --note TEXT.',
     'status prints cohort metadata, aggregate runtime counts, and incident category counts without paths or notes.',
+    'finish records a UTC finish time and deactivates the cohort; finish before starting another cohort.',
     'Options: --state-root DIR --sessions-dir DIR --repo-dir DIR.',
     'No model calls, live model inventory, network access, or writes to the sessions directory are performed.',
   ].join('\n') + '\n'
@@ -395,6 +480,9 @@ function runCli(argv) {
     if (command === 'start') {
       const result = createCohort(options)
       console.log(`started cohort commit=${result.commit} started=${result.startedAt} baselineFiles=${result.baselineCount}`)
+    } else if (command === 'finish') {
+      const result = finishCohort(options)
+      console.log(`finished cohort commit=${result.commit} shortHead=${result.shortHead} started=${result.startedAt} finished=${result.finishedAt}`)
     } else if (command === 'report') {
       const result = runReport(options)
       if (!result.report) {
@@ -419,7 +507,7 @@ function runCli(argv) {
     const message = error?.message
     const allowed = new Set([
       'command required', 'unknown command', 'invalid options', 'repository worktree must be clean',
-      'could not inspect repository', 'cohort already exists', 'could not create cohort', 'cohort not found',
+      'could not inspect repository', 'cohort already exists', 'active cohort exists', 'could not create cohort', 'cohort not found',
       'invalid cohort', 'invalid sessions directory', 'could not inspect sessions', 'session file size limit exceeded',
       'session file count limit exceeded', 'session directory depth limit exceeded', 'invalid incident agent',
       'invalid incident category', 'invalid incident severity', 'invalid incident note', 'invalid incident',

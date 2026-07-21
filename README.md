@@ -95,6 +95,8 @@ npm run sync-extensions-status
 
 For local symlink installation, cleanup, and migration details, see [`scripts/README.md`](scripts/README.md).
 
+The private agent observation cohort workflow is documented in [`scripts/README.md`](scripts/README.md); it uses an immutable baseline, an active-cohort lifecycle, and cumulative aggregate reports.
+
 ## Canopy scheduler integration
 
 The scheduler integration is supported for Canopy repositories. It selects the

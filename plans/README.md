@@ -10,7 +10,7 @@ changes, and update the corresponding status row when done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |---|---|---|---|---|---|
 | 001 | Make operational agent prompts evidence-bounded and verifiable | P1 | M | — | DONE (`254980b`, reviewed and approved) |
-| 002 | Clarify review roles and make coordinator failures explicit | P1 | M | — | TODO |
+| 002 | Clarify review roles and make coordinator failures explicit | P1 | M | — | DONE (`3a583ab`, reviewed and approved) |
 | 003 | Add deterministic prompt contracts and reproducible usage evidence | P2 | M | 001, 002 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |

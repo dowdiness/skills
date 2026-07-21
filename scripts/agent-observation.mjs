@@ -16,6 +16,7 @@ import {
   readFileSync,
   readdirSync,
   readSync,
+  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -53,6 +54,7 @@ export const METADATA_FILE = 'metadata.json'
 export const REPORT_FILE = 'latest-report.json'
 export const INCIDENT_FILE = 'incidents.tsv'
 export const ACTIVE_POINTER_FILE = 'active-cohort.json'
+export const PENDING_FINISH_FILE = '.pending-finish.json'
 
 const CATEGORY_SET = new Set(INCIDENT_CATEGORIES)
 const SEVERITY_SET = new Set(INCIDENT_SEVERITIES)
@@ -240,12 +242,28 @@ function activePointerPath(stateRoot) {
   return join(normalizeAbsolutePath(stateRoot), ACTIVE_POINTER_FILE)
 }
 
+function pendingFinishPath(stateRoot) {
+  return join(normalizeAbsolutePath(stateRoot), PENDING_FINISH_FILE)
+}
+
 function readJson(path, errorMessage) {
   try {
     return JSON.parse(readFileSync(path, 'utf8'))
   } catch {
     throw new Error(errorMessage)
   }
+}
+
+function validatePointer(pointer) {
+  const keys = Object.keys(pointer ?? {}).sort()
+  if (keys.length !== 3 || keys.join(',') !== 'commit,schemaVersion,shortHead'
+    || pointer.schemaVersion !== SCHEMA_VERSION
+    || typeof pointer.commit !== 'string' || !/^[0-9a-f]{40}$/u.test(pointer.commit)
+    || typeof pointer.shortHead !== 'string' || !/^[0-9a-f]{12}$/u.test(pointer.shortHead)
+    || pointer.shortHead !== pointer.commit.slice(0, 12)) {
+    throw new Error('invalid cohort')
+  }
+  return pointer
 }
 
 function readActivePointer(stateRoot) {
@@ -258,16 +276,45 @@ function readActivePointer(stateRoot) {
     throw new Error('invalid cohort')
   }
   if (!info.isFile() || info.isSymbolicLink()) throw new Error('invalid cohort')
-  const pointer = readJson(path, 'invalid cohort')
-  const keys = Object.keys(pointer ?? {}).sort()
-  if (keys.length !== 3 || keys.join(',') !== 'commit,schemaVersion,shortHead'
-    || pointer.schemaVersion !== SCHEMA_VERSION
-    || typeof pointer.commit !== 'string' || !/^[0-9a-f]{40}$/u.test(pointer.commit)
-    || typeof pointer.shortHead !== 'string' || !/^[0-9a-f]{12}$/u.test(pointer.shortHead)
-    || pointer.shortHead !== pointer.commit.slice(0, 12)) {
+  return validatePointer(readJson(path, 'invalid cohort'))
+}
+
+function pendingFinishExists(stateRoot) {
+  try {
+    lstatSync(pendingFinishPath(stateRoot))
+    return true
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false
+    // An inaccessible marker must fail closed just like a readable marker.
+    return true
+  }
+}
+
+function assertCohortNotFinishing(stateRoot) {
+  if (pendingFinishExists(stateRoot)) throw new Error('cohort finishing')
+}
+
+function readPendingFinish(stateRoot) {
+  const path = pendingFinishPath(stateRoot)
+  let info
+  try {
+    info = lstatSync(path)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null
     throw new Error('invalid cohort')
   }
-  return pointer
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error('invalid cohort')
+  const pending = readJson(path, 'invalid cohort')
+  const keys = Object.keys(pending ?? {}).sort()
+  if (keys.length !== 4 || keys.join(',') !== 'commit,finishedAt,schemaVersion,shortHead'
+    || pending.schemaVersion !== SCHEMA_VERSION
+    || typeof pending.commit !== 'string' || !/^[0-9a-f]{40}$/u.test(pending.commit)
+    || typeof pending.shortHead !== 'string' || !/^[0-9a-f]{12}$/u.test(pending.shortHead)
+    || pending.shortHead !== pending.commit.slice(0, 12)
+    || typeof pending.finishedAt !== 'string' || !ISO_UTC_PATTERN.test(pending.finishedAt)) {
+    throw new Error('invalid cohort')
+  }
+  return pending
 }
 
 function validateSnapshotArray(values, pattern, normalizeValue = (value) => value, allowEmpty = false) {
@@ -283,14 +330,23 @@ function validateSnapshotArray(values, pattern, normalizeValue = (value) => valu
   return true
 }
 
-function removeActivePointer(stateRoot, expected) {
-  const current = readActivePointer(stateRoot)
+function removeMatchingActivePointer(stateRoot, expected) {
+  let current
+  try {
+    current = readActivePointer(stateRoot)
+  } catch (error) {
+    if (error?.message === 'cohort not found') return
+    throw error
+  }
   if (current.commit !== expected.commit || current.shortHead !== expected.shortHead) throw new Error('invalid cohort')
-  unlinkSync(activePointerPath(stateRoot))
+  try {
+    unlinkSync(activePointerPath(stateRoot))
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
 }
 
-function readCohort(stateRoot, repoDir) {
-  const pointer = readActivePointer(stateRoot)
+function readCohortFromPointer(stateRoot, repoDir, pointer) {
   const repository = {
     repoDir: normalizeAbsolutePath(repoDir),
     commit: pointer.commit,
@@ -321,6 +377,10 @@ function readCohort(stateRoot, repoDir) {
   }
 }
 
+function readCohort(stateRoot, repoDir) {
+  return readCohortFromPointer(stateRoot, repoDir, readActivePointer(stateRoot))
+}
+
 function ensureActivePointerAbsent(stateRoot) {
   try {
     lstatSync(activePointerPath(stateRoot))
@@ -336,6 +396,22 @@ function ensureCohortAbsent(directory) {
     throw new Error('cohort already exists')
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error
+  }
+}
+
+function atomicPrivateFile(path, content) {
+  const temporary = `${path}.tmp-${randomBytes(9).toString('hex')}`
+  let temporaryCreated = false
+  try {
+    privateFile(temporary, content, { exclusive: true })
+    temporaryCreated = true
+    renameSync(temporary, path)
+    temporaryCreated = false
+    chmodSync(path, 0o600)
+  } finally {
+    if (temporaryCreated) {
+      try { unlinkSync(temporary) } catch {}
+    }
   }
 }
 
@@ -374,6 +450,7 @@ function cohortSnapshots() {
 }
 
 function createCohortUnlocked({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
+  assertCohortNotFinishing(stateRoot)
   ensureActivePointerAbsent(stateRoot)
   const repository = repositoryState(repoDir)
   const directory = cohortDirectory(stateRoot, repository.shortHead)
@@ -448,6 +525,7 @@ function caseId() {
 }
 
 function appendIncidentUnlocked({ stateRoot, repoDir, incident, now = new Date() }) {
+  assertCohortNotFinishing(stateRoot)
   const cohort = readCohort(stateRoot, repoDir)
   const validated = validateIncident(incident, cohort.agentNames)
   const id = caseId()
@@ -457,20 +535,47 @@ function appendIncidentUnlocked({ stateRoot, repoDir, incident, now = new Date()
   return { id, timestamp, ...validated }
 }
 
-function finishCohortUnlocked({ stateRoot, repoDir, now = new Date() }) {
-  const cohort = readCohort(stateRoot, repoDir)
-  const finishedAt = now.toISOString()
-  privateFile(join(cohort.directory, METADATA_FILE), `${JSON.stringify({
+function finalizePendingFinishUnlocked({ stateRoot, repoDir, pending }) {
+  const cohort = readCohortFromPointer(stateRoot, repoDir, {
+    schemaVersion: SCHEMA_VERSION,
+    commit: pending.commit,
+    shortHead: pending.shortHead,
+  })
+  if (cohort.metadata.finishedAt !== undefined && cohort.metadata.finishedAt !== pending.finishedAt) {
+    throw new Error('invalid cohort')
+  }
+  atomicPrivateFile(join(cohort.directory, METADATA_FILE), `${JSON.stringify({
     ...cohort.metadata,
-    finishedAt,
+    finishedAt: pending.finishedAt,
   }, null, 2)}\n`)
-  removeActivePointer(stateRoot, cohort.pointer)
+  removeMatchingActivePointer(stateRoot, pending)
+  try {
+    unlinkSync(pendingFinishPath(stateRoot))
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
   return {
     commit: cohort.metadata.commit,
     shortHead: cohort.metadata.shortHead,
     startedAt: cohort.metadata.startedAt,
-    finishedAt,
+    finishedAt: pending.finishedAt,
   }
+}
+
+function finishCohortUnlocked({ stateRoot, repoDir, now = new Date() }) {
+  const pending = readPendingFinish(stateRoot)
+  if (pending) return finalizePendingFinishUnlocked({ stateRoot, repoDir, pending })
+
+  const cohort = readCohort(stateRoot, repoDir)
+  if (cohort.metadata.finishedAt !== undefined) throw new Error('invalid cohort')
+  const pendingFinish = {
+    schemaVersion: SCHEMA_VERSION,
+    commit: cohort.metadata.commit,
+    shortHead: cohort.metadata.shortHead,
+    finishedAt: now.toISOString(),
+  }
+  atomicPrivateFile(pendingFinishPath(stateRoot), `${JSON.stringify(pendingFinish, null, 2)}\n`)
+  return finalizePendingFinishUnlocked({ stateRoot, repoDir, pending: pendingFinish })
 }
 
 export function appendIncident(options) {
@@ -495,6 +600,7 @@ function clearStaleAggregate(directory) {
 }
 
 function runReportUnlocked({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
+  assertCohortNotFinishing(stateRoot)
   const cohort = readCohort(stateRoot, repoDir)
   const files = enumerateSessionFiles(sessionsDir)
   const newFiles = selectNewSessionFiles(files, cohort.baselineHashes)
@@ -545,6 +651,7 @@ function incidentCounts(path) {
 }
 
 function statusSnapshotUnlocked({ stateRoot, sessionsDir, repoDir }) {
+  assertCohortNotFinishing(stateRoot)
   const cohort = readCohort(stateRoot, repoDir)
   const files = enumerateSessionFiles(sessionsDir)
   const newFiles = selectNewSessionFiles(files, cohort.baselineHashes)
@@ -612,7 +719,8 @@ export function helpText() {
     'report is aggregate-only and should be run after pi exits; it cumulatively includes every current JSONL file created after start.',
     'incident requires --agent NAME --category CATEGORY --severity low|medium|high --note TEXT.',
     'status prints cohort metadata, aggregate runtime counts, and incident category counts without paths or notes.',
-    'finish records a UTC finish time and deactivates the cohort; finish before starting another cohort.',
+    'finish records a UTC finish time and deactivates the cohort; an interrupted finish resumes safely on retry.',
+    'While finish recovery is pending, start/report/incident/status fail closed with cohort finishing; finish remains available.',
     'Operations use an exclusive state-root-local lock; a live or stale lock fails closed without removing it.',
     'start snapshots the sorted packaged agent names and normalized configured model IDs; later validation and aggregation use that snapshot even after HEAD drift.',
     'Options: --state-root DIR --sessions-dir DIR --repo-dir DIR.',
@@ -658,7 +766,7 @@ function runCli(argv) {
       'could not inspect repository', 'cohort already exists', 'active cohort exists', 'could not create cohort', 'cohort not found',
       'observation operation already in progress', 'could not lock observation state', 'invalid cohort', 'invalid sessions directory',
       'could not inspect sessions', 'session file size limit exceeded', 'session file changed during read', 'could not read session file',
-      'session file count limit exceeded', 'session directory depth limit exceeded', 'invalid incident agent',
+      'cohort finishing', 'session file count limit exceeded', 'session directory depth limit exceeded', 'invalid incident agent',
       'invalid incident category', 'invalid incident severity', 'invalid incident note', 'invalid incident',
       'could not validate agent', 'could not read incident storage', 'invalid aggregate report',
     ])

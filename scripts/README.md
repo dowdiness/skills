@@ -87,8 +87,11 @@ counts with zero current files. The active pointer keeps report/status/incident
 tied to the original cohort even if Git HEAD later changes; incident names and
 trusted model IDs also use the start snapshot rather than current checkout
 configuration. `finish` records a UTC `finishedAt` in metadata, removes the
-active pointer, and must be run before starting another cohort. After finish,
-report/status/incident fail with `cohort not found`. `status` shows only
+active pointer, and must be run before starting another cohort. It first writes
+a private pending-finish marker, so a crash between those steps is resumed safely
+by retrying `finish`; the original timestamp is preserved. While that marker
+exists, start/report/status/incident fail closed with `cohort finishing`. After
+finish, report/status/incident fail with `cohort not found`. `status` shows only
 commit/time, counts, and aggregate runtime fields. Incident notes are bounded
 single-line operator notes; do not put task text, paths, cwd, credentials,
 email addresses, tokens, or other identifying details in them. Valid categories are

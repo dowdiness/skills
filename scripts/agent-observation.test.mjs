@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test'
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { ACTIVE_POINTER_FILE, hashPathIdentity, enumerateSessionFiles, helpText, readSessionFile } from './agent-observation.mjs'
+import { ACTIVE_POINTER_FILE, PENDING_FINISH_FILE, hashPathIdentity, enumerateSessionFiles, helpText, readSessionFile } from './agent-observation.mjs'
 import { MAX_FILE_BYTES } from './agent-usage-report.mjs'
 
 const repositoryRoot = resolve(new URL('..', import.meta.url).pathname)
@@ -42,6 +42,11 @@ function session(path, agent = 'worker') {
   writeFileSync(path, JSON.stringify({ message: { toolName: 'subagent', details: { results: [{ agent, exitCode: 0 }] } } }) + '\n')
 }
 
+function pendingFinish(fixture, finishedAt) {
+  const pointer = JSON.parse(readFileSync(join(fixture.state, ACTIVE_POINTER_FILE), 'utf8'))
+  writeFileSync(join(fixture.state, PENDING_FINISH_FILE), `${JSON.stringify({ ...pointer, finishedAt }, null, 2)}\n`, { mode: 0o600 })
+}
+
 function sessionWithModel(path, model, agent = 'worker') {
   writeFileSync(path, [
     { content: [{ type: 'toolCall', name: 'subagent', id: 'call-1', arguments: { agent } }] },
@@ -56,6 +61,8 @@ function cleanup(fixture) {
 test('help documents the active cohort finish lifecycle', () => {
   expect(helpText()).toContain('<start|report|incident|status|finish>')
   expect(helpText()).toContain('finish records a UTC finish time')
+  expect(helpText()).toContain('interrupted finish resumes safely on retry')
+  expect(helpText()).toContain('cohort finishing')
   expect(helpText()).toContain('exclusive state-root-local lock')
   expect(helpText()).toContain('snapshots the sorted packaged agent names')
 })
@@ -238,6 +245,53 @@ test('finish records metadata, removes activation, and prevents same-commit over
   const sameCommit = run(...args(fixture, 'start'))
   expect(sameCommit.status).toBe(1)
   expect(sameCommit.stderr).toContain('cohort already exists')
+  cleanup(fixture)
+})
+
+test('finish retries recover with the old active pointer and blocks other operations', () => {
+  const fixture = fixtureRepo()
+  expect(run(...args(fixture, 'start')).status).toBe(0)
+  const finishedAt = '2099-01-02T03:04:05.678Z'
+  pendingFinish(fixture, finishedAt)
+  expect(statSync(join(fixture.state, PENDING_FINISH_FILE)).mode & 0o777).toBe(0o600)
+
+  for (const command of ['start', 'report', 'status', 'incident']) {
+    const result = run(...args(fixture, command, command === 'incident'
+      ? ['--agent', 'worker', '--category', 'rework', '--severity', 'low', '--note', 'blocked while finishing']
+      : []))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('cohort finishing')
+    expect(result.stderr).not.toContain(fixture.root)
+  }
+
+  expect(run(...args(fixture, 'finish')).status).toBe(0)
+  const metadata = JSON.parse(readFileSync(join(fixture.state, fixture.shortHead, 'metadata.json'), 'utf8'))
+  expect(metadata.finishedAt).toBe(finishedAt)
+  expect(() => statSync(join(fixture.state, ACTIVE_POINTER_FILE))).toThrow()
+  expect(() => statSync(join(fixture.state, PENDING_FINISH_FILE))).toThrow()
+  cleanup(fixture)
+})
+
+test('finish retries recover after the matching active pointer was already removed', () => {
+  const fixture = fixtureRepo()
+  expect(run(...args(fixture, 'start')).status).toBe(0)
+  const finishedAt = '2099-02-03T04:05:06.789Z'
+  pendingFinish(fixture, finishedAt)
+  unlinkSync(join(fixture.state, ACTIVE_POINTER_FILE))
+
+  for (const command of ['start', 'report', 'status', 'incident']) {
+    const result = run(...args(fixture, command, command === 'incident'
+      ? ['--agent', 'worker', '--category', 'rework', '--severity', 'low', '--note', 'blocked while finishing']
+      : []))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('cohort finishing')
+  }
+
+  expect(run(...args(fixture, 'finish')).status).toBe(0)
+  const metadata = JSON.parse(readFileSync(join(fixture.state, fixture.shortHead, 'metadata.json'), 'utf8'))
+  expect(metadata.finishedAt).toBe(finishedAt)
+  expect(() => statSync(join(fixture.state, ACTIVE_POINTER_FILE))).toThrow()
+  expect(() => statSync(join(fixture.state, PENDING_FINISH_FILE))).toThrow()
   cleanup(fixture)
 })
 

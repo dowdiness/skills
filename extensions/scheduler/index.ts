@@ -17,7 +17,7 @@ import { executeAgentProcess, executeRouteSteps, isCompleteParallelReviewOutput,
 import { settleRouteUi } from "./ui-lifecycle.js";
 const SUBAGENT_EXTENSION = fileURLToPath(new URL("../subagent/index.ts", import.meta.url));
 
-export function selectAgentExtensions(agent: Pick<AgentConfig, "name" | "tools">): string[] | undefined {
+export function selectAgentExtensions(agent: Pick<AgentConfig, "tools">): string[] | undefined {
 	return agent.tools?.includes("subagent") ? [SUBAGENT_EXTENSION] : undefined;
 }
 

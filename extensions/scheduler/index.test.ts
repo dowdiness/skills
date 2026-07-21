@@ -21,15 +21,25 @@ mock.module("@earendil-works/pi-tui", () => ({
 const { execCapture, selectAgentExtensions, writeReviewContext } = await import("./index.ts");
 const subagentExtension = fileURLToPath(new URL("../subagent/index.ts", import.meta.url));
 
+function readDeclaredTools(fileName: string): string[] {
+	const content = readFileSync(fileURLToPath(new URL(`../../agents/${fileName}`, import.meta.url)), "utf8");
+	const match = content.match(/^tools:\s*(.+)$/m);
+	if (!match) throw new Error(`Missing tools declaration in ${fileName}`);
+	return match[1].split(",").map((tool) => tool.trim()).filter(Boolean);
+}
+
 function git(cwd: string, ...args: string[]): void {
 	execFileSync("git", args, { cwd, stdio: "ignore" });
 }
 
-test("selects subagent extension from declared tools", () => {
-	for (const name of ["ensemble-reviewer", "parallel-reviewer", "review-router"]) {
-		expect(selectAgentExtensions({ name, tools: ["read", "subagent"] })).toEqual([subagentExtension]);
+test("selects subagent extension from packaged agent tool declarations", () => {
+	for (const fileName of ["ensemble-reviewer.md", "parallel-reviewer.md", "review-router.md"]) {
+		const tools = readDeclaredTools(fileName);
+		expect(selectAgentExtensions({ tools })).toEqual([subagentExtension]);
 	}
-	expect(selectAgentExtensions({ name: "reviewer", tools: ["read", "grep"] })).toBeUndefined();
+
+	const tools = readDeclaredTools("reviewer.md");
+	expect(selectAgentExtensions({ tools })).toBeUndefined();
 });
 
 test("captures committed branch diff and untracked files", async () => {

@@ -46,21 +46,19 @@ report.
 7. Deduplicate overlapping findings, resolve contradictions, and rank by
    severity. Give `moonbit-reviewer` findings extra weight for MoonBit API,
    package-boundary, `.mbti`, and validation issues.
-8. Output a single consolidated report. If any dispatched leaf is
-   `failed-or-missing`, begin `## Summary` with `INCOMPLETE REVIEW`, name every
-   missing reviewer, and never claim the review is clean, complete, or
-   merge-ready.
+8. Output a single consolidated report.
+
+## Output format
+
+Use this exact structure and include one status entry for every dispatched reviewer.
 
 ## Reviewer Status
 - `reviewer-correctness`: usable report received | failed-or-missing
 - `reviewer-idioms`: usable report received | failed-or-missing
 - `reviewer-api-boundary`: usable report received | failed-or-missing
-- Include `moonbit-reviewer`: usable report received | failed-or-missing only when it was dispatched.
+- When dispatched, `moonbit-reviewer`: usable report received | failed-or-missing
 
-Every dispatched leaf must have a status entry. A usable report requires
-non-empty `## Files Reviewed` and `## Summary` sections.
-
-## Output format
+Mark a report usable only when `## Files Reviewed` and `## Summary` are non-empty. If any dispatched leaf is `failed-or-missing`, begin `## Summary` with `INCOMPLETE REVIEW`, name every missing reviewer, and do not claim the review is clean, complete, or merge-ready.
 
 ## Files Reviewed
 - `path/to/file.mbt` (lines X-Y)

@@ -6,31 +6,60 @@ import { join, resolve } from 'node:path'
 import { EXPECTED_AGENT_NAMES } from './agent-prompt-contracts.mjs'
 
 export const SCHEMA_VERSION = 1
+export const MAX_INPUT_FILES = 512
+export const MAX_RECURSION_DEPTH = 16
+export const MAX_FILE_BYTES = 10 * 1024 * 1024
+
 const AGENT_NAMES = new Set(EXPECTED_AGENT_NAMES)
-const USAGE_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite', 'contextTokens', 'cost', 'turns']
+const USAGE_FIELDS = Object.freeze(['input', 'output', 'cacheRead', 'cacheWrite', 'contextTokens', 'turns'])
+const RUNTIME_FIELDS = Object.freeze(['success', 'failure', 'aborted', 'unresolved'])
+const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/+@:-]{0,199}$/
 
 function emptyUsage() {
   return Object.fromEntries(USAGE_FIELDS.map((field) => [field, 0]))
+}
+
+function emptyRuntime() {
+  return Object.fromEntries(RUNTIME_FIELDS.map((field) => [field, 0]))
 }
 
 function emptyAgent(agent) {
   return {
     agent,
     invocations: 0,
-    runtime: { success: 0, failure: 0, aborted: 0 },
+    runtime: emptyRuntime(),
     models: new Set(),
     usage: emptyUsage(),
     durationMs: 0,
   }
 }
 
-function numberOrZero(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+function emptyState() {
+  return {
+    agents: new Map(EXPECTED_AGENT_NAMES.map((agent) => [agent, emptyAgent(agent)])),
+    unknownRecords: 0,
+    malformedRecords: 0,
+    missingLeaves: 0,
+    callDurationMs: 0,
+  }
 }
 
-function addUsage(target, usage) {
+function isCounter(value) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function addSafe(target, field, value) {
+  if (!isCounter(value) || target[field] > Number.MAX_SAFE_INTEGER - value) return false
+  target[field] += value
+  return true
+}
+
+function addUsage(state, target, usage) {
   if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return false
-  for (const field of USAGE_FIELDS) target[field] += numberOrZero(usage[field])
+  for (const field of USAGE_FIELDS) {
+    if (!(field in usage)) continue
+    if (!addSafe(target, field, usage[field])) state.malformedRecords += 1
+  }
   return true
 }
 
@@ -49,10 +78,13 @@ function recordContent(record) {
 
 function timestampMs(record) {
   const value = record?.timestamp ?? record?.message?.timestamp ?? record?.createdAt
-  if (typeof value === 'number' && Number.isFinite(value)) return value < 1e12 ? value * 1000 : value
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const milliseconds = value < 1e12 ? value * 1000 : value
+    return Number.isSafeInteger(milliseconds) ? milliseconds : null
+  }
   if (typeof value === 'string') {
     const parsed = Date.parse(value)
-    if (Number.isFinite(parsed)) return parsed
+    if (Number.isSafeInteger(parsed)) return parsed
   }
   return null
 }
@@ -137,7 +169,7 @@ function extractRecords(records) {
   return { calls, results, malformedRecords, unknownRecords }
 }
 
-function addLeaf(state, leaf, durationMs = null) {
+function addLeaf(state, leaf) {
   if (!leaf || typeof leaf !== 'object' || Array.isArray(leaf)) {
     state.malformedRecords += 1
     return null
@@ -151,23 +183,34 @@ function addLeaf(state, leaf, durationMs = null) {
   if (leaf.exitCode === 0) aggregate.runtime.success += 1
   else if (leaf.stopReason === 'aborted' || leaf.exitCode === 130) aggregate.runtime.aborted += 1
   else aggregate.runtime.failure += 1
-  if (typeof leaf.model === 'string' && leaf.model.trim()) aggregate.models.add(leaf.model.trim())
-  if (!addUsage(aggregate.usage, leaf.usage)) state.malformedRecords += 1
-  if (durationMs !== null && Number.isFinite(durationMs) && durationMs >= 0) aggregate.durationMs += durationMs
+
+  if ('model' in leaf) {
+    if (typeof leaf.model === 'string' && MODEL_ID_PATTERN.test(leaf.model)) aggregate.models.add(leaf.model)
+    else state.malformedRecords += 1
+  }
+  if ('usage' in leaf && !addUsage(state, aggregate.usage, leaf.usage)) state.malformedRecords += 1
+  if ('durationMs' in leaf) {
+    if (!addSafe(aggregate, 'durationMs', leaf.durationMs)) state.malformedRecords += 1
+  }
   return leaf.agent
 }
 
 function addMissingLeaf(state, agent) {
   const aggregate = state.agents.get(agent)
-  aggregate.invocations += 1
-  aggregate.runtime.failure += 1
+  aggregate.runtime.unresolved += 1
   state.missingLeaves += 1
+}
+
+function addCallDuration(state, call, result) {
+  if (call.timestamp === null || result.timestamp === null) return
+  const duration = result.timestamp - call.timestamp
+  if (!addSafe(state, 'callDurationMs', duration)) state.malformedRecords += 1
 }
 
 function emptyTotals() {
   return {
     invocations: 0,
-    runtime: { success: 0, failure: 0, aborted: 0 },
+    runtime: emptyRuntime(),
     models: new Set(),
     usage: emptyUsage(),
     durationMs: 0,
@@ -178,11 +221,15 @@ function finalizeAggregate(state) {
   const totals = emptyTotals()
   const agents = [...state.agents.values()].sort((a, b) => a.agent.localeCompare(b))
   for (const aggregate of agents) {
-    totals.invocations += aggregate.invocations
-    for (const key of ['success', 'failure', 'aborted']) totals.runtime[key] += aggregate.runtime[key]
+    if (!addSafe(totals, 'invocations', aggregate.invocations)) state.malformedRecords += 1
+    for (const key of RUNTIME_FIELDS) {
+      if (!addSafe(totals.runtime, key, aggregate.runtime[key])) state.malformedRecords += 1
+    }
     for (const model of aggregate.models) totals.models.add(model)
-    for (const field of USAGE_FIELDS) totals.usage[field] += aggregate.usage[field]
-    totals.durationMs += aggregate.durationMs
+    for (const field of USAGE_FIELDS) {
+      if (!addSafe(totals.usage, field, aggregate.usage[field])) state.malformedRecords += 1
+    }
+    if (!addSafe(totals, 'durationMs', aggregate.durationMs)) state.malformedRecords += 1
   }
   const serialize = (aggregate) => ({
     agent: aggregate.agent,
@@ -201,6 +248,7 @@ function finalizeAggregate(state) {
       models: [...totals.models].sort(),
       usage: { ...totals.usage },
       durationMs: totals.durationMs,
+      callDurationMs: state.callDurationMs,
     },
     unknownRecords: state.unknownRecords,
     malformedRecords: state.malformedRecords,
@@ -210,35 +258,35 @@ function finalizeAggregate(state) {
 
 export function aggregateSessionRecords(records) {
   const extracted = extractRecords(records)
-  const state = {
-    agents: new Map(EXPECTED_AGENT_NAMES.map((agent) => [agent, emptyAgent(agent)])),
-    unknownRecords: extracted.unknownRecords,
-    malformedRecords: extracted.malformedRecords,
-    missingLeaves: 0,
-  }
+  const state = emptyState()
+  state.unknownRecords = extracted.unknownRecords
+  state.malformedRecords = extracted.malformedRecords
   const matchedCallIds = new Set()
+  const returnedAgents = new Map()
 
   for (const result of extracted.results) {
     const call = extracted.calls.get(result.toolCallId)
-    if (call) matchedCallIds.add(result.toolCallId)
-    const seenAgents = new Map()
-    for (const leaf of result.leaves) {
-      const duration = call ? (result.timestamp !== null && call.timestamp !== null ? result.timestamp - call.timestamp : null) : null
-      const agent = addLeaf(state, leaf, duration)
-      if (agent) seenAgents.set(agent, (seenAgents.get(agent) ?? 0) + 1)
-    }
     if (call) {
-      for (const agent of call.requested) {
-        const count = seenAgents.get(agent) ?? 0
-        if (count > 0) seenAgents.set(agent, count - 1)
-        else addMissingLeaf(state, agent)
+      if (!matchedCallIds.has(result.toolCallId)) addCallDuration(state, call, result)
+      matchedCallIds.add(result.toolCallId)
+    }
+    for (const leaf of result.leaves) {
+      const agent = addLeaf(state, leaf)
+      if (call && agent) {
+        const byAgent = returnedAgents.get(result.toolCallId) ?? new Map()
+        byAgent.set(agent, (byAgent.get(agent) ?? 0) + 1)
+        returnedAgents.set(result.toolCallId, byAgent)
       }
     }
   }
 
   for (const [toolCallId, call] of extracted.calls) {
-    if (matchedCallIds.has(toolCallId)) continue
-    for (const agent of call.requested) addMissingLeaf(state, agent)
+    const seenAgents = returnedAgents.get(toolCallId) ?? new Map()
+    for (const agent of call.requested) {
+      const count = seenAgents.get(agent) ?? 0
+      if (count > 0) seenAgents.set(agent, count - 1)
+      else addMissingLeaf(state, agent)
+    }
   }
 
   return finalizeAggregate(state)
@@ -260,11 +308,64 @@ export function aggregateSessionLines(lines) {
   return report
 }
 
+function mergeCounter(state, target, field, value) {
+  if (value === undefined) return
+  if (!addSafe(target, field, value)) state.malformedRecords += 1
+}
+
+function mergeAgent(state, source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    state.malformedRecords += 1
+    return
+  }
+  if (typeof source.agent !== 'string' || !AGENT_NAMES.has(source.agent)) {
+    state.unknownRecords += 1
+    return
+  }
+  const target = state.agents.get(source.agent)
+  mergeCounter(state, target, 'invocations', source.invocations)
+  for (const field of RUNTIME_FIELDS) mergeCounter(state, target.runtime, field, source.runtime?.[field])
+  for (const field of USAGE_FIELDS) mergeCounter(state, target.usage, field, source.usage?.[field])
+  mergeCounter(state, target, 'durationMs', source.durationMs)
+  if (Array.isArray(source.models)) {
+    for (const model of source.models) {
+      if (typeof model === 'string' && MODEL_ID_PATTERN.test(model)) target.models.add(model)
+      else state.malformedRecords += 1
+    }
+  } else if (source.models !== undefined) state.malformedRecords += 1
+}
+
+/** Merge aggregate-only reports without exposing or re-correlating session records. */
+export function mergeUsageReports(reports) {
+  const state = emptyState()
+  if (!Array.isArray(reports)) {
+    state.malformedRecords += 1
+    return finalizeAggregate(state)
+  }
+  for (const report of reports) {
+    if (!report || typeof report !== 'object' || Array.isArray(report)) {
+      state.malformedRecords += 1
+      continue
+    }
+    if (report.schemaVersion !== undefined && report.schemaVersion !== SCHEMA_VERSION) state.malformedRecords += 1
+    if (Array.isArray(report.agents)) {
+      for (const source of report.agents) mergeAgent(state, source)
+    } else {
+      state.malformedRecords += 1
+    }
+    mergeCounter(state, state, 'unknownRecords', report.unknownRecords)
+    mergeCounter(state, state, 'malformedRecords', report.malformedRecords)
+    mergeCounter(state, state, 'missingLeaves', report.missingLeaves)
+    mergeCounter(state, state, 'callDurationMs', report.totals?.callDurationMs)
+  }
+  return finalizeAggregate(state)
+}
+
 export function formatReport(report, format = 'table') {
   if (format === 'json') return `${JSON.stringify(report, null, 2)}\n`
   const lines = [
     'Agent usage report (runtime evidence only; no task, cwd, content, messages, response, or path data)',
-    'agent                 invocations success failure aborted turns input output cacheRead cacheWrite contextTokens cost durationMs models',
+    'agent                 invocations success failure aborted unresolved turns input output cacheRead cacheWrite contextTokens durationMs models',
   ]
   for (const aggregate of report.agents) {
     lines.push([
@@ -273,19 +374,19 @@ export function formatReport(report, format = 'table') {
       String(aggregate.runtime.success).padStart(7),
       String(aggregate.runtime.failure).padStart(7),
       String(aggregate.runtime.aborted).padStart(7),
+      String(aggregate.runtime.unresolved).padStart(9),
       String(aggregate.usage.turns).padStart(6),
       String(aggregate.usage.input).padStart(5),
       String(aggregate.usage.output).padStart(6),
       String(aggregate.usage.cacheRead).padStart(9),
       String(aggregate.usage.cacheWrite).padStart(10),
       String(aggregate.usage.contextTokens).padStart(13),
-      String(aggregate.usage.cost).padStart(6),
       String(aggregate.durationMs).padStart(10),
       aggregate.models.join(',') || '-',
     ].join(' '))
   }
-  lines.push(`totals: invocations=${report.totals.invocations} success=${report.totals.runtime.success} failure=${report.totals.runtime.failure} aborted=${report.totals.runtime.aborted} turns=${report.totals.usage.turns} input=${report.totals.usage.input} output=${report.totals.usage.output} durationMs=${report.totals.durationMs}`)
-  lines.push(`unknownRecords=${report.unknownRecords} malformedRecords=${report.malformedRecords} missingLeaves=${report.missingLeaves}`)
+  lines.push(`totals: invocations=${report.totals.invocations} success=${report.totals.runtime.success} failure=${report.totals.runtime.failure} aborted=${report.totals.runtime.aborted} unresolved=${report.totals.runtime.unresolved} turns=${report.totals.usage.turns} input=${report.totals.usage.input} output=${report.totals.usage.output} durationMs=${report.totals.durationMs} callDurationMs=${report.totals.callDurationMs}`)
+  lines.push(`unknownRecords=${report.unknownRecords} malformedRecords=${report.malformedRecords} missingLeaves=${report.missingLeaves} (missing leaves are unresolved evidence, not invocations or failures)`)
   return `${lines.join('\n')}\n`
 }
 
@@ -295,7 +396,10 @@ export function helpText() {
     '',
     'Reads only the explicitly supplied JSONL files or directories and emits aggregate runtime evidence.',
     'Default with no paths: print this help and exit 0; no home-directory scan is performed.',
+    `Input limits: at most ${MAX_INPUT_FILES} JSONL files, directory depth ${MAX_RECURSION_DEPTH}, and ${MAX_FILE_BYTES} bytes per file; symlinks are rejected.`,
     'Privacy boundary: task, cwd, content, messages, response text, credentials, paths, and filenames are omitted.',
+    'Missing requested leaves remain unresolved evidence; they are not counted as invocations or runtime failures.',
+    'Per-agent duration uses only explicit leaf durationMs; matched tool-call wall time is counted once as totals.callDurationMs.',
     'Static prompt checks are shape checks, not behavioral model evaluations; this report makes no model calls.',
   ].join('\n') + '\n'
 }
@@ -322,21 +426,34 @@ export function parseArgs(argv) {
   return { format, paths, help }
 }
 
-function collectJsonlFiles(paths) {
+export function collectJsonlFiles(paths) {
   const files = []
-  const visit = (path, directoryEntry) => {
-    const info = lstatSync(path)
-    if (info.isSymbolicLink()) {
-      if (directoryEntry) return
-      throw new Error('unsupported input')
+  const visit = (path, directoryEntry, depth) => {
+    let info
+    try {
+      info = lstatSync(path)
+    } catch {
+      throw new Error('could not read explicit JSONL input')
     }
+    if (info.isSymbolicLink()) throw new Error('unsupported input')
     if (info.isFile()) {
-      if (!directoryEntry || path.endsWith('.jsonl')) files.push(path)
+      if ((!directoryEntry || path.endsWith('.jsonl'))) {
+        if (info.size > MAX_FILE_BYTES) throw new Error('input file size limit exceeded')
+        if (files.length >= MAX_INPUT_FILES) throw new Error('input file count limit exceeded')
+        files.push(path)
+      }
     } else if (info.isDirectory()) {
-      for (const entry of readdirSync(path).sort()) visit(join(path, entry), true)
+      if (depth > MAX_RECURSION_DEPTH) throw new Error('input directory depth limit exceeded')
+      let entries
+      try {
+        entries = readdirSync(path).sort()
+      } catch {
+        throw new Error('could not read explicit JSONL input')
+      }
+      for (const entry of entries) visit(join(path, entry), true, depth + 1)
     } else throw new Error('unsupported input')
   }
-  for (const path of paths) visit(path, false)
+  for (const path of paths) visit(path, false, 0)
   if (files.length === 0) throw new Error('no input files')
   return files
 }
@@ -356,8 +473,13 @@ export function main(argv = process.argv.slice(2)) {
   let report
   try {
     const files = collectJsonlFiles(options.paths)
-    const lines = files.flatMap((path) => readFileSync(path, 'utf8').split(/\r?\n/))
-    report = aggregateSessionLines(lines)
+    const reports = []
+    for (const path of files) {
+      const bytes = readFileSync(path)
+      if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('input file size limit exceeded')
+      reports.push(aggregateSessionLines(bytes.toString('utf8').split(/\r?\n/)))
+    }
+    report = mergeUsageReports(reports)
   } catch {
     console.error('ERROR: could not read explicit JSONL input')
     return 1

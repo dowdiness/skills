@@ -1,0 +1,2 @@
+{"type":"message","timestamp":"2026-01-01T01:00:00.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"shared-call","name":"subagent","arguments":{"agent":"scout"}}]}}
+{"type":"message","timestamp":"2026-01-01T01:00:02.000Z","message":{"toolName":"subagent","toolCallId":"shared-call","details":{"results":[{"agent":"scout","exitCode":0,"model":"test/shared-scout","durationMs":7,"usage":{"input":1,"output":2,"turns":1}}]}}}

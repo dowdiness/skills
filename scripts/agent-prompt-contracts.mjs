@@ -26,6 +26,7 @@ export const EXPECTED_AGENT_NAMES = Object.freeze([
 
 const heading = (value) => ({ label: `heading "## ${value}"`, test: (text) => new RegExp(`^## ${escapeRegExp(value)}$`, 'm').test(text) })
 const concept = (label, pattern) => ({ kind: 'concept', label, test: (text) => pattern.test(text) })
+const decisionLabel = (label) => concept(`decision label ${label}`, new RegExp('`' + escapeRegExp(label) + '`', 'm'))
 const forbiddenDescription = (label, pattern) => ({ kind: 'forbidden-description', label, test: (description) => !pattern.test(description) })
 
 const PROVIDER_OR_MODEL_BRAND = /\b(?:OpenAI|Anthropic|Claude|Codex|GPT(?:-[0-9.]+)?|DeepSeek|Qwen|Nemotron|Gemini|MiMo|OpenCode|Google)\b/i
@@ -37,11 +38,13 @@ export const AGENT_PROMPT_CONTRACTS = Object.freeze({
       heading('Completed'), heading('Files Changed'), heading('Validation'),
     ],
     concepts: [
+      decisionLabel('PROCEED'), decisionLabel('PROCEED WITH ASSUMPTIONS'), decisionLabel('CLARIFICATION NEEDED'), decisionLabel('STOPPED'),
       concept('source-backed documentation rules', /source-backed/i),
       concept('deliverable reread/existence check', /reread every changed|confirm that every requested target exists/i),
       concept('requested-target coverage', /coverage list/i),
       concept('unsupported quantitative claims ban', /word-count|percentage reduction/i),
-      concept('INCOMPLETE completion status', /INCOMPLETE/),
+      concept('partial source-backed progress', /partial, source-backed progress/i),
+      concept('INCOMPLETE versus STOPPED distinction', /INCOMPLETE.*distinct from `?STOPPED/i),
     ],
   },
   'ensemble-reviewer': {
@@ -62,6 +65,7 @@ export const AGENT_PROMPT_CONTRACTS = Object.freeze({
       concept('validation execution limit', /validation execution/i),
       concept('mechanical coverage counts', /requested, matched, applied, and skipped counts/i),
       concept('ambiguity STOP behavior', /STOP when .* ambiguous/i),
+      concept('unsupported capability STOP behavior', /STOP when a requested operation requires an unsupported capability/i),
     ],
   },
   'moonbit-planner': {
@@ -70,10 +74,13 @@ export const AGENT_PROMPT_CONTRACTS = Object.freeze({
       heading('Non-goals'), heading('Reuse Check'), heading('Plan'), heading('Validation Plan'),
     ],
     concepts: [
+      decisionLabel('PROCEED'), decisionLabel('PROCEED WITH ASSUMPTIONS'), decisionLabel('CLARIFICATION NEEDED'), decisionLabel('STOPPED'),
       concept('reuse provenance labels', /source-verified.*inherited-unverified.*requires-tool-confirmation/s),
       concept('worker preflight verification', /worker must.*verify named files, symbols, package roots, and assumptions/i),
       concept('30-step ceiling', /30 numbered steps/i),
       concept('MoonBit validation is planned, not run', /cannot run `moon ide`, `moon check`, or `moon test`/i),
+      concept('downstream editing and validation are not STOP reasons', /editing and validation execution are normal downstream handoffs, not reasons to stop/i),
+      concept('capability STOP is evidence/plan-only', /required capability outside this role applies only when that capability is required to safely inspect evidence or produce the plan/i),
       concept('objective/package STOP behavior', /CLARIFICATION NEEDED.*STOPPED/s),
     ],
   },
@@ -101,11 +108,14 @@ export const AGENT_PROMPT_CONTRACTS = Object.freeze({
       heading('Architecture'), heading('Validation / Follow-up'), heading('Start Here'),
     ],
     concepts: [
+      decisionLabel('PROCEED'), decisionLabel('PROCEED WITH ASSUMPTIONS'), decisionLabel('CLARIFICATION NEEDED'), decisionLabel('STOPPED'),
       concept('bounded evidence citations', /exact line ranges? that .* actually read/i),
       concept('source-verified API labels', /source-verified/),
       concept('moon ide confirmation labels', /needs moon ide confirmation/),
       concept('generated mbti caution', /Do not infer generated `?\.mbti/i),
       concept('600-word output bound', /at most 600 words/i),
+      concept('bounded discovery', /one bounded discovery pass/i),
+      concept('edit/bash/conflict STOP boundary', /requires editing or bash, or instructions conflict/i),
       concept('STOP behavior', /STOPPED/),
     ],
   },
@@ -124,9 +134,12 @@ export const AGENT_PROMPT_CONTRACTS = Object.freeze({
       heading('Non-goals'), heading('Reuse Check'), heading('Plan'), heading('Validation Plan'),
     ],
     concepts: [
+      decisionLabel('PROCEED'), decisionLabel('PROCEED WITH ASSUMPTIONS'), decisionLabel('CLARIFICATION NEEDED'), decisionLabel('STOPPED'),
       concept('reuse provenance labels', /source-verified.*inherited-unverified.*requires-tool-confirmation/s),
       concept('worker preflight verification', /worker must.*verify named files, symbols, package roots, and assumptions/i),
       concept('30-step ceiling', /30 numbered steps/i),
+      concept('downstream editing and validation are not STOP reasons', /editing and validation execution are normal downstream handoffs, not reasons to stop/i),
+      concept('capability STOP is evidence/plan-only', /required capability outside this role applies only when that capability is required to safely inspect evidence or produce the plan/i),
       concept('objective/package STOP behavior', /CLARIFICATION NEEDED.*STOPPED/s),
     ],
   },
@@ -177,20 +190,26 @@ export const AGENT_PROMPT_CONTRACTS = Object.freeze({
       heading('Architecture'), heading('Follow-up Checks'), heading('Start Here'),
     ],
     concepts: [
+      decisionLabel('PROCEED'), decisionLabel('PROCEED WITH ASSUMPTIONS'), decisionLabel('CLARIFICATION NEEDED'), decisionLabel('STOPPED'),
       concept('bounded evidence citations', /exact line ranges? that .* actually read/i),
       concept('inference status', /inferred.*unverified/s),
       concept('sensitive-content exclusion', /secrets, credentials, tokens, or PII/i),
       concept('600-word output bound', /at most 600 words/i),
+      concept('bounded discovery', /one bounded discovery pass/i),
+      concept('edit/bash/conflict STOP boundary', /requires editing or bash, or instructions conflict/i),
       concept('STOP behavior', /STOPPED/),
     ],
   },
   worker: {
     required: [heading('Completed'), heading('Files Changed'), heading('Validation'), heading('Remaining Risks')],
     concepts: [
+      decisionLabel('PROCEED'), decisionLabel('PROCEED WITH ASSUMPTIONS'), decisionLabel('CLARIFICATION NEEDED'), decisionLabel('STOPPED'),
       concept('instruction-file preflight', /AGENTS\.md.*CLAUDE\.md/i),
       concept('dirty-tree inspection', /working-tree changes/i),
       concept('delegated scope boundary', /delegated scope and acceptance criteria are authoritative/i),
       concept('validation command reporting', /exact command, working directory, and pass\/fail status/i),
+      concept('lightest relevant validation', /lightest relevant validation/i),
+      concept('explicit authorization for external effects', /explicit approval.*originating user.*repository.*external action|not authorization for publication.*paid.*external/i),
       concept('INCOMPLETE completion status', /INCOMPLETE/),
       concept('ambiguity STOP behavior', /CLARIFICATION NEEDED|STOPPED/),
     ],

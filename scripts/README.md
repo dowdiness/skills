@@ -36,12 +36,18 @@ npm run agent-usage-report -- --help
 ```
 
 Reports contain only allowlisted agent names, invocation/runtime counts,
-recorded model IDs, numeric usage totals, and duration when timestamps permit.
+conservative model IDs (ASCII alphanumeric first, then only `._/+@:-`,
+maximum 200 characters), non-negative safe-integer usage totals, explicit leaf
+durations, and matched tool-call wall time counted once as `callDurationMs`.
+Missing requested leaves remain unresolved evidence (`missingLeaves` and
+`runtime.unresolved`); they are not confirmed invocations or runtime failures.
 Task text, cwd, content, messages, responses, credentials, paths, and filenames
-are omitted. Human delegation outcomes are not merged into runtime success or
-failure. Keep real session data out of the repository; the checked-in fixtures
-are synthetic only. Live model evaluations remain a separately budgeted,
-provider-approved future facility.
+are omitted. Each explicit file is correlated independently before aggregate-only
+reports are merged. Processing is bounded to 512 JSONL files, directory depth
+16, and 10 MiB per file; symlinks are not followed. Human delegation outcomes
+are not merged into runtime success or failure. Keep real session data out of the
+repository; the checked-in fixtures are synthetic only. Live model evaluations
+remain a separately budgeted, provider-approved future facility.
 
 ## Check the installed Pi agent environment
 

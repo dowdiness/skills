@@ -9,6 +9,7 @@ import {
   defaultStateRoot,
   recordIncident,
   readAutomationAggregate,
+  type ObservationMemoryFilesystem,
 } from "./core.ts";
 
 const incidentSchema = Type.Object({
@@ -16,13 +17,20 @@ const incidentSchema = Type.Object({
   category: StringEnum([...INCIDENT_CATEGORIES], { description: "A strict observation category." }),
   severity: StringEnum([...INCIDENT_SEVERITIES], { description: "A strict observation severity." }),
   note: Type.String({ minLength: 1, maxLength: MAX_NOTE_LENGTH, description: "A short, non-sensitive operator note." }),
+  saveToMemory: Type.Optional(Type.Boolean({ description: "Set true only when the user explicitly asks to record and remember this feedback." })),
 }, { additionalProperties: false });
 
 export type RecordObservationInput = Static<typeof incidentSchema>;
 
-const PROMPT_SNIPPET = "record_observation: record feedback only when the user explicitly asks to record it; never infer or guess.";
+export interface AgentObservationDependencies {
+  memoryRoot?: string;
+  filesystem?: Partial<ObservationMemoryFilesystem>;
+}
+
+const PROMPT_SNIPPET = "record_observation: record feedback only after an explicit request; set saveToMemory=true only when the user explicitly asks to record AND remember it; never infer or guess.";
 const PROMPT_GUIDELINES = [
   "Use record_observation ONLY when the user explicitly asks to record feedback (for example, 観測に記録して); never infer or guess that feedback should be recorded.",
+  "Set saveToMemory=true ONLY when the user explicitly asks to record and remember/save the same feedback; recording alone means false or omitted.",
   "record_observation stores structured feedback; do not call it for ordinary discussion or to summarize a task.",
 ];
 
@@ -57,7 +65,7 @@ function checkpointContext(ctx: ExtensionContext): void {
   }
 }
 
-export default function agentObservation(pi: ExtensionAPI): void {
+export default function agentObservation(pi: ExtensionAPI, dependencies: AgentObservationDependencies = {}): void {
   if (process.env.PI_SCHEDULER_CHILD === "1") return;
 
   pi.on("session_start", async (_event, ctx) => {
@@ -76,14 +84,19 @@ export default function agentObservation(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "record_observation",
     label: "Record observation",
-    description: "Record structured feedback only after the user explicitly asks for it. Never infer or guess feedback.",
+    description: "Record structured feedback only after the user explicitly asks for it. Set saveToMemory=true only for an explicit request to both record and remember/save it; never infer or guess.",
     promptSnippet: PROMPT_SNIPPET,
     promptGuidelines: PROMPT_GUIDELINES,
     parameters: incidentSchema,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (isEphemeral(ctx)) throw new Error("Observation unavailable.");
       try {
-        const result = recordIncident({ stateRoot: defaultStateRoot(), incident: params });
+        const result = recordIncident({
+          stateRoot: defaultStateRoot(),
+          incident: params,
+          memoryRoot: dependencies.memoryRoot,
+          filesystem: dependencies.filesystem,
+        });
         if (!result) throw new Error("Observation unavailable.");
         return { content: [{ type: "text", text: `Recorded ${result.id} (${result.category}).` }] };
       } catch {

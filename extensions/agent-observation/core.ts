@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { chmodSync, closeSync, constants, fchmodSync, fsyncSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, fchmodSync, fsyncSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { validateIncident as validateIncidentShared } from "../../scripts/agent-observation-validation.mjs";
@@ -17,6 +17,7 @@ export const LOCK_FILE = ".operation.lock";
 export const INCIDENT_CATEGORIES = ["false_clarification", "false_stop", "unsafe_proceed", "wrong_route", "false_complete", "rework", "good_assumption"] as const;
 export const INCIDENT_SEVERITIES = ["low", "medium", "high"] as const;
 export const MAX_NOTE_LENGTH = 240;
+export const OBSERVATION_MEMORY_CATEGORY = "agent-observations";
 
 const USAGE_FIELDS = ["input", "output", "cacheRead", "cacheWrite", "contextTokens", "turns"] as const;
 const RUNTIME_FIELDS = ["success", "failure", "aborted", "unresolved"] as const;
@@ -25,6 +26,7 @@ const AGENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const CASE_PATTERN = /^case-[a-f0-9]{18}$/u;
+const MEMORY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
 
 // Persisted observation state is private and bounded. The bound is deliberately
 // generous for fingerprinted session state, while preventing untrusted files from
@@ -655,15 +657,226 @@ export function validateIncident(input: unknown, agentNames: Set<string>): { age
   return validateIncidentShared(input, agentNames, MAX_NOTE_LENGTH);
 }
 
-export function recordIncident(options: { stateRoot?: string; incident: unknown; now?: Date }): { id: string; category: string } | null {
+export interface ObservationMemoryFilesystem {
+  lstatSync: typeof lstatSync;
+  mkdirSync: typeof mkdirSync;
+  openSync: typeof openSync;
+  writeFileSync: typeof writeFileSync;
+  fchmodSync: typeof fchmodSync;
+  fsyncSync: typeof fsyncSync;
+  closeSync: typeof closeSync;
+  renameSync: typeof renameSync;
+  unlinkSync: typeof unlinkSync;
+  rmdirSync: typeof rmdirSync;
+}
+
+export interface ObservationMemoryDocument {
+  caseId: string;
+  date: string;
+  agent: string;
+  category: string;
+  severity: string;
+  note: string;
+}
+
+const MEMORY_FILESYSTEM: ObservationMemoryFilesystem = {
+  lstatSync,
+  mkdirSync,
+  openSync,
+  writeFileSync,
+  fchmodSync,
+  fsyncSync,
+  closeSync,
+  renameSync,
+  unlinkSync,
+  rmdirSync,
+};
+
+export function defaultMemoryRoot(): string {
+  return join(homedir(), ".Codex", "skills", "agent-memory", "memories");
+}
+
+function memoryError(message: string): Error {
+  return new Error(message);
+}
+
+function validMemoryDocument(document: ObservationMemoryDocument): boolean {
+  return isSafeCaseId(document.caseId)
+    && MEMORY_DATE_PATTERN.test(document.date)
+    && AGENT_PATTERN.test(document.agent)
+    && INCIDENT_CATEGORIES.includes(document.category as typeof INCIDENT_CATEGORIES[number])
+    && INCIDENT_SEVERITIES.includes(document.severity as typeof INCIDENT_SEVERITIES[number])
+    && typeof document.note === "string"
+    && document.note.length > 0
+    && document.note.length <= MAX_NOTE_LENGTH
+    && !/[\u0000-\u001f\u007f-\u009f]/u.test(document.note);
+}
+
+/** Pure, allowlisted Markdown rendering for the global observation memory. */
+export function renderObservationMemory(document: ObservationMemoryDocument): string {
+  if (!validMemoryDocument(document)) throw memoryError("invalid observation memory");
+  return [
+    "---",
+    `summary: \"Agent observation ${document.caseId} (${document.category})\"`,
+    `created: ${document.date}`,
+    "---",
+    "",
+    "# Agent observation",
+    "",
+    `- Case ID: ${document.caseId}`,
+    `- Agent: ${document.agent}`,
+    `- Category: ${document.category}`,
+    `- Severity: ${document.severity}`,
+    `- Note: ${document.note}`,
+    "",
+  ].join("\n");
+}
+
+type MemoryFilesystemOverrides = Partial<ObservationMemoryFilesystem>;
+type MemoryTarget = { categoryDirectory: string; destination: string; filesystem: ObservationMemoryFilesystem };
+
+function inspectMemoryDirectory(path: string, filesystem: ObservationMemoryFilesystem): boolean {
+  try {
+    const info = filesystem.lstatSync(path);
+    if (info.isSymbolicLink() || !info.isDirectory()) throw memoryError("invalid observation memory category");
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+    if (error instanceof Error && error.message === "invalid observation memory category") throw error;
+    throw memoryError("could not prepare observation memory");
+  }
+}
+
+function ensureMemoryDirectory(path: string, filesystem: ObservationMemoryFilesystem): boolean {
+  if (inspectMemoryDirectory(path, filesystem)) return false;
+  try {
+    filesystem.mkdirSync(path, { recursive: true, mode: 0o700 });
+    if (!inspectMemoryDirectory(path, filesystem)) throw memoryError("could not prepare observation memory");
+    return true;
+  } catch (error) {
+    if (error instanceof Error && (error.message === "invalid observation memory category" || error.message === "could not prepare observation memory")) throw error;
+    throw memoryError("could not prepare observation memory");
+  }
+}
+
+function prepareMemoryTarget(root: string, caseId: string, filesystem: ObservationMemoryFilesystem): MemoryTarget {
+  // Validate existing ancestors/categories without chmodding them. Missing directories
+  // are created only once the incident append has succeeded.
+  inspectMemoryDirectory(root, filesystem);
+  const categoryDirectory = join(root, OBSERVATION_MEMORY_CATEGORY);
+  const categoryExists = inspectMemoryDirectory(categoryDirectory, filesystem);
+  const destination = join(categoryDirectory, `${caseId}.md`);
+  if (categoryExists) {
+    try {
+      filesystem.lstatSync(destination);
+      throw memoryError("observation memory already exists");
+    } catch (error) {
+      if (error instanceof Error && error.message === "observation memory already exists") throw error;
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw memoryError("could not prepare observation memory");
+    }
+  }
+  return { categoryDirectory, destination, filesystem };
+}
+
+function writeObservationMemory(target: MemoryTarget, root: string, content: string): void {
+  let categoryCreated = false;
+  let temporary: string | undefined;
+  let fd: number | undefined;
+  try {
+    ensureMemoryDirectory(root, target.filesystem);
+    categoryCreated = ensureMemoryDirectory(target.categoryDirectory, target.filesystem);
+    try {
+      target.filesystem.lstatSync(target.destination);
+      throw memoryError("observation memory already exists");
+    } catch (error) {
+      if (error instanceof Error && error.message === "observation memory already exists") throw error;
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw memoryError("could not write observation memory");
+    }
+    for (;;) {
+      temporary = `${target.destination}.tmp-${randomBytes(9).toString("hex")}`;
+      try {
+        fd = target.filesystem.openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw memoryError("could not write observation memory");
+      }
+    }
+    target.filesystem.writeFileSync(fd, content, "utf8");
+    target.filesystem.fchmodSync(fd, 0o600);
+    target.filesystem.fsyncSync(fd);
+    target.filesystem.closeSync(fd);
+    fd = undefined;
+    target.filesystem.renameSync(temporary, target.destination);
+    temporary = undefined;
+  } catch (error) {
+    if (fd !== undefined) {
+      try { target.filesystem.closeSync(fd); } catch {}
+    }
+    if (temporary) {
+      try { target.filesystem.unlinkSync(temporary); } catch {}
+    }
+    if (categoryCreated) {
+      try { target.filesystem.rmdirSync(target.categoryDirectory); } catch {}
+    }
+    if (error instanceof Error && ["observation memory already exists", "could not write observation memory"].includes(error.message)) throw error;
+    throw memoryError("could not write observation memory");
+  }
+}
+
+type IncidentSnapshot = { size: number; dev: number; ino: number };
+
+function incidentSnapshot(path: string): IncidentSnapshot {
+  const info = lstatSync(path);
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error("could not record observation");
+  return { size: info.size, dev: info.dev, ino: info.ino };
+}
+
+function rollbackIncident(path: string, snapshot: IncidentSnapshot): void {
+  let fd: number | undefined;
+  try {
+    const current = lstatSync(path);
+    if (!current.isFile() || current.isSymbolicLink() || current.dev !== snapshot.dev || current.ino !== snapshot.ino) return;
+    fd = openSync(path, constants.O_WRONLY | constants.O_NOFOLLOW);
+    const opened = fstatSync(fd);
+    if (opened.dev !== snapshot.dev || opened.ino !== snapshot.ino) return;
+    ftruncateSync(fd, snapshot.size);
+    fsyncSync(fd);
+  } catch {
+    // Best effort only: cross-directory writes cannot be fully atomic.
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+export function recordIncident(options: { stateRoot?: string; incident: unknown; now?: Date; saveToMemory?: boolean; memoryRoot?: string; filesystem?: MemoryFilesystemOverrides }): { id: string; category: string } | null {
   const stateRoot = options.stateRoot ?? stateRootDefault();
   return withLock(stateRoot, () => {
     const cohort = readCohort(stateRoot);
     if (!cohort) return null;
+    const raw = options.incident as any;
+    if (options.saveToMemory !== undefined && typeof options.saveToMemory !== "boolean") throw new Error("invalid observation option");
+    if (raw && typeof raw === "object" && raw.saveToMemory !== undefined && typeof raw.saveToMemory !== "boolean") throw new Error("invalid observation option");
+    const saveToMemory = options.saveToMemory ?? (raw?.saveToMemory === true);
     const incident = validateIncident(options.incident, cohort.agentNames);
     const id = `case-${randomBytes(9).toString("hex")}`;
-    const line = [id, (options.now ?? new Date()).toISOString(), incident.agent, incident.category, incident.severity, incident.note].join("\t") + "\n";
-    privateAppend(join(cohort.directory, INCIDENT_FILE), line);
+    const timestamp = (options.now ?? new Date()).toISOString();
+    const memoryRoot = options.memoryRoot ?? defaultMemoryRoot();
+    const filesystem = { ...MEMORY_FILESYSTEM, ...(options.filesystem ?? {}) };
+    const memory = saveToMemory
+      ? { target: prepareMemoryTarget(memoryRoot, id, filesystem), content: renderObservationMemory({ caseId: id, date: timestamp.slice(0, 10), ...incident }) }
+      : null;
+    const incidentPath = join(cohort.directory, INCIDENT_FILE);
+    const snapshot = incidentSnapshot(incidentPath);
+    const line = [id, timestamp, incident.agent, incident.category, incident.severity, incident.note].join("\t") + "\n";
+    privateAppend(incidentPath, line);
+    if (memory) {
+      try {
+        writeObservationMemory(memory.target, memoryRoot, memory.content);
+      } catch (error) {
+        rollbackIncident(incidentPath, snapshot);
+        throw error;
+      }
+    }
     return { id, category: incident.category };
   });
 }

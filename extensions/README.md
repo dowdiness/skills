@@ -17,7 +17,12 @@ use: startup/reload/new/resume/fork/clone, tree navigation, settled turns, and
 shutdown. It never finishes a cohort and does nothing for scheduler child or
 ephemeral sessions. Runtime state stores only HMAC fingerprints and aggregate
 runtime evidence. Use natural language such as `観測に記録して` when feedback
-should be recorded; the agent then calls `record_observation` explicitly.
+should be recorded; the agent then calls `record_observation` explicitly. Set
+`saveToMemory=true` only for an explicit request to both record and remember the
+same feedback; this also writes a sanitized global memory under
+`~/.Codex/skills/agent-memory/memories/agent-observations/`. The combined path
+validates the incident once and rolls back the incident on ordinary memory-write failure;
+full cross-directory crash atomicity is not possible.
 
 ## scheduler
 

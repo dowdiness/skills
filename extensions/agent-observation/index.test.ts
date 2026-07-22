@@ -8,6 +8,8 @@ mock.module("typebox", () => ({
   Type: {
     Object: (properties: unknown, options: unknown) => ({ type: "object", properties, options }),
     String: (options: unknown) => ({ type: "string", options }),
+    Boolean: (options: unknown) => ({ type: "boolean", options }),
+    Optional: (schema: unknown) => ({ ...(schema as object), optional: true }),
   },
 }));
 mock.module("@earendil-works/pi-ai", () => ({ StringEnum: (values: unknown, options: unknown) => ({ type: "string", values, options }) }));
@@ -61,7 +63,8 @@ test("registers all automatic lifecycle checkpoints and records only explicitly 
     },
     registerTool: (definition: any) => { tool = definition; },
   } as any;
-  factory(pi);
+  const memoryRoot = join(f.root, "memories");
+  factory(pi, { memoryRoot });
   expect([...handlers.keys()].sort()).toEqual(["agent_settled", "session_shutdown", "session_start", "session_tree"]);
   expect(tool.name).toBe("record_observation");
   expect(tool.promptSnippet).toContain("record_observation");
@@ -82,6 +85,10 @@ test("registers all automatic lifecycle checkpoints and records only explicitly 
   expect(result).not.toHaveProperty("details");
   const incidents = readFileSync(join(f.cohort, "incidents.tsv"), "utf8");
   expect(incidents).toContain("\tworker\twrong_route\tlow\tshort operator note\n");
+  const memoryResult = await tool.execute("opaque-remember", { agent: "worker", category: "wrong_route", severity: "low", note: "remember this operator note", saveToMemory: true }, undefined, undefined, c.ctx);
+  expect(memoryResult.content[0].text).toMatch(/^Recorded case-[a-f0-9]{18} \(wrong_route\)\.$/);
+  const memoryId = memoryResult.content[0].text.match(/case-[a-f0-9]{18}/u)![0];
+  expect(readFileSync(join(memoryRoot, "agent-observations", `${memoryId}.md`), "utf8")).toContain(`Case ID: ${memoryId}`);
 });
 
 test("scheduler children and ephemeral sessions are no-ops", async () => {

@@ -71,7 +71,12 @@ The packaged `agent-observation` extension checkpoints startup/reload/new/resume
 tree navigation, settled turns, and shutdown. It never finishes a cohort. A user
 may say `観測に記録して`; only then does the agent call `record_observation`.
 The tool validates the snapshotted agent, strict category/severity, and bounded
-note, and returns only an opaque case ID and category. It never infers feedback.
+note, and returns only an opaque case ID and category. Use `saveToMemory=true`
+only when the user explicitly asks to both record and remember the feedback; it
+creates a correlated sanitized Markdown memory under
+`~/.Codex/skills/agent-memory/memories/agent-observations/`. The combined write
+uses best-effort rollback on ordinary failure; cross-directory crash consistency
+cannot be made fully atomic.
 
 `start` requires a clean Git worktree and creates a private cohort under
 `$XDG_STATE_HOME/skills-agent-observation/<short-head>` (or

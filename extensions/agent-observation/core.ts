@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { chmodSync, closeSync, constants, existsSync, fchmodSync, fsyncSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, fchmodSync, fsyncSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { validateIncident as validateIncidentShared } from "../../scripts/agent-observation-validation.mjs";
@@ -25,6 +25,11 @@ const AGENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const CASE_PATTERN = /^case-[a-f0-9]{18}$/u;
+
+// Persisted observation state is private and bounded. The bound is deliberately
+// generous for fingerprinted session state, while preventing untrusted files from
+// turning a status/checkpoint read into an unbounded allocation.
+export const MAX_PRIVATE_STATE_BYTES = 4 * 1024 * 1024;
 
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -151,11 +156,62 @@ function withLock<T>(stateRoot: string, operation: () => T): T {
   }
 }
 
+class InvalidPrivateStateError extends Error {
+  constructor() {
+    super("invalid private state");
+  }
+}
+
+class MissingPrivateStateError extends Error {
+  readonly code = "ENOENT";
+
+  constructor() {
+    super("private state is missing");
+  }
+}
+
+/**
+ * Read a private state file through one descriptor. O_NOFOLLOW protects the
+ * open itself; all subsequent reads use that descriptor, so replacement after
+ * open cannot redirect the read to a symlink target.
+ */
+export function readPrivateState(path: string, maxBytes = MAX_PRIVATE_STATE_BYTES): Buffer {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = fstatSync(fd);
+    const owned = typeof process.getuid !== "function" || before.uid === process.getuid();
+    if (!before.isFile() || before.isSymbolicLink() || !owned || (before.mode & 0o077) !== 0 || (before.mode & 0o400) === 0) {
+      throw new InvalidPrivateStateError();
+    }
+    if (!Number.isSafeInteger(before.size) || before.size > maxBytes) throw new InvalidPrivateStateError();
+
+    const buffer = Buffer.alloc(before.size);
+    let total = 0;
+    while (total < before.size) {
+      const count = readSync(fd, buffer, total, before.size - total, null);
+      if (count === 0) break;
+      total += count;
+    }
+    const extra = Buffer.alloc(1);
+    const extraCount = readSync(fd, extra, 0, 1, null);
+    const after = fstatSync(fd);
+    if (!after.isFile() || after.isSymbolicLink() || after.size > maxBytes
+      || after.size !== before.size || total !== before.size || extraCount !== 0) {
+      throw new InvalidPrivateStateError();
+    }
+    return buffer;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") throw new MissingPrivateStateError();
+    throw new InvalidPrivateStateError();
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 function readObject(path: string): Record<string, any> | null {
   try {
-    const info = lstatSync(path);
-    if (!info.isFile() || info.isSymbolicLink()) return null;
-    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const value: unknown = JSON.parse(readPrivateState(path).toString("utf8"));
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : null;
   } catch {
     return null;
@@ -186,9 +242,7 @@ function readCohort(stateRoot: string): CohortInfo | null {
 function readKey(cohort: CohortInfo): Buffer | null {
   const path = join(cohort.directory, AUTOMATION_KEY_FILE);
   try {
-    const info = lstatSync(path);
-    if (!info.isFile() || info.isSymbolicLink() || info.mode & 0o077) return null;
-    const key = readFileSync(path);
+    const key = readPrivateState(path, 32);
     return key.length === 32 ? key : null;
   } catch {
     return null;
@@ -199,9 +253,21 @@ function ensureKey(cohort: CohortInfo): Buffer {
   const current = readKey(cohort);
   if (current) return current;
   const path = join(cohort.directory, AUTOMATION_KEY_FILE);
-  if (existsSync(path)) throw new Error("invalid automation state");
-  privateFile(path, randomBytes(32), true);
-  return readKey(cohort) ?? (() => { throw new Error("invalid automation state"); })();
+  try {
+    lstatSync(path);
+    throw new Error(INVALID_AUTOMATION_STATE);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      if (error instanceof Error && error.message === INVALID_AUTOMATION_STATE) throw error;
+      throw new Error(INVALID_AUTOMATION_STATE);
+    }
+  }
+  try {
+    privateFile(path, randomBytes(32), true);
+  } catch {
+    throw new Error(INVALID_AUTOMATION_STATE);
+  }
+  return readKey(cohort) ?? (() => { throw new Error(INVALID_AUTOMATION_STATE); })();
 }
 
 function emptyUsage(): Record<string, number> {
@@ -470,19 +536,12 @@ function validateState(value: any, cohort: CohortInfo): AutomationState | null {
 const INVALID_AUTOMATION_STATE = "invalid automation state";
 
 function readExistingObject(path: string): Record<string, any> | null {
-  let info;
   try {
-    info = lstatSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
-    throw new Error(INVALID_AUTOMATION_STATE);
-  }
-  if (!info.isFile() || info.isSymbolicLink()) throw new Error(INVALID_AUTOMATION_STATE);
-  try {
-    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const value: unknown = JSON.parse(readPrivateState(path).toString("utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(INVALID_AUTOMATION_STATE);
     return value as Record<string, any>;
   } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
     if (error instanceof Error && error.message === INVALID_AUTOMATION_STATE) throw error;
     throw new Error(INVALID_AUTOMATION_STATE);
   }

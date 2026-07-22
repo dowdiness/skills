@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { AUTOMATION_KEY_FILE, AUTOMATION_STATE_FILE, LOCK_FILE, aggregateSessionRecords, canonicalEntry, checkpoint, entryFingerprint } from "./core.ts";
+import { AUTOMATION_KEY_FILE, AUTOMATION_STATE_FILE, LOCK_FILE, aggregateSessionRecords, canonicalEntry, checkpoint, entryFingerprint, readPrivateState } from "./core.ts";
 
 const fixtureRoots: string[] = [];
 afterEach(() => {
@@ -120,7 +120,7 @@ test("legacy aggregate migration baselines current entries without recounting", 
   aggregate.agents.find((agent) => agent.agent === "worker")!.runtime.success = 1;
   aggregate.totals.invocations = 1;
   aggregate.totals.runtime.success = 1;
-  writeFileSync(join(f.cohort, "latest-report.json"), JSON.stringify({ schemaVersion: 1, generatedAt: "2026-01-01T00:00:03.000Z", fileCount: 1, aggregate }));
+  writeFileSync(join(f.cohort, "latest-report.json"), JSON.stringify({ schemaVersion: 1, generatedAt: "2026-01-01T00:00:03.000Z", fileCount: 1, aggregate }), { mode: 0o600 });
   rmSync(join(f.cohort, AUTOMATION_STATE_FILE));
   expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "legacy", entries: invocation })?.invocationCount).toBe(1);
   expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "legacy", entries: [...invocation, call("new"), result("new")] })?.invocationCount).toBe(2);
@@ -209,12 +209,23 @@ test("valid nonzero diagnostic counters survive strict persisted aggregate valid
     generatedAt: "2026-01-01T00:00:03.000Z",
     fileCount: 1,
     aggregate,
-  }));
+  }), { mode: 0o600 });
   const result = checkpoint({ stateRoot: f.stateRoot, sessionId: "diagnostics", entries: [] });
   expect(result?.report).toEqual(aggregate);
   expect(result?.report.unknownRecords).toBeGreaterThan(0);
   expect(result?.report.malformedRecords).toBeGreaterThan(0);
   expect(result?.report.missingLeaves).toBeGreaterThan(0);
+});
+
+test("private descriptor reads reject symlinks without exposing or changing their targets", () => {
+  const f = fixture();
+  const target = join(f.stateRoot, "secret-state");
+  const link = join(f.cohort, "linked-state");
+  writeFileSync(target, "PRIVATE_TARGET_SECRET", { mode: 0o600 });
+  symlinkSync(target, link);
+  expect(() => readPrivateState(link)).toThrow("invalid private state");
+  expect(readFileSync(target, "utf8")).toBe("PRIVATE_TARGET_SECRET");
+  expect(readlinkSync(link)).toBe(target);
 });
 
 test("automation state symlinks fail closed without replacing the link or target", () => {

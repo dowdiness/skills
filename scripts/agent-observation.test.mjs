@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { ACTIVE_POINTER_FILE, PENDING_FINISH_FILE, hashPathIdentity, enumerateSessionFiles, helpText, readSessionFile } from './agent-observation.mjs'
+import { ACTIVE_POINTER_FILE, PENDING_FINISH_FILE, hashPathIdentity, enumerateSessionFiles, helpText, readPrivateText, readSessionFile } from './agent-observation.mjs'
 import { MAX_FILE_BYTES } from './agent-usage-report.mjs'
 
 const repositoryRoot = resolve(new URL('..', import.meta.url).pathname)
@@ -412,6 +412,25 @@ test('active cohort follows its pointer across a clean commit drift', () => {
   expect(status.stdout).toContain('good_assumption=1')
   expect(run(...args(fixture, 'finish')).status).toBe(0)
   cleanup(fixture)
+})
+
+test('shared private JSON reader rejects static symlinks and does not expose target content', () => {
+  const fixture = fixtureRepo()
+  const target = join(fixture.root, 'private-target.json')
+  const link = join(fixture.state, 'private-link.json')
+  writeFileSync(target, 'TARGET_SECRET_CONTENT', { mode: 0o600 })
+  symlinkSync(target, link)
+  expect(() => readPrivateText(link)).toThrow('invalid private state')
+  expect(readFileSync(target, 'utf8')).toBe('TARGET_SECRET_CONTENT')
+  expect(readlinkSync(link)).toBe(target)
+  cleanup(fixture)
+})
+
+test('state readers have no pathname read after an lstat precheck', () => {
+  const coreSource = readFileSync(join(repositoryRoot, 'extensions/agent-observation/core.ts'), 'utf8')
+  const scriptSource = readFileSync(script, 'utf8')
+  expect(coreSource).not.toContain('readFileSync(')
+  expect(scriptSource).not.toContain('readFileSync(')
 })
 
 test('session reads tiny and zero-length files without changing their contents', () => {

@@ -31,6 +31,7 @@ function activeFixture() {
   writeFileSync(join(cohort, "metadata.json"), JSON.stringify({ schemaVersion: 1, commit, shortHead, startedAt: "2026-01-01T00:00:00.000Z", agentNames: ["worker"], modelIds: ["test/model"] }));
   writeFileSync(join(cohort, "incidents.tsv"), "");
   for (const path of [stateRoot, cohort]) chmodSync(path, 0o700);
+  for (const path of [join(stateRoot, "active-cohort.json"), join(cohort, "metadata.json"), join(cohort, "incidents.tsv")]) chmodSync(path, 0o600);
   return { root, stateRoot, cohort, shortHead };
 }
 

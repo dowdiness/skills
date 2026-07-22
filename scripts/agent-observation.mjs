@@ -12,7 +12,6 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readdirSync,
   readSync,
   renameSync,
@@ -35,7 +34,7 @@ import {
   MAX_INPUT_FILES,
   MAX_RECURSION_DEPTH,
 } from './agent-usage-report.mjs'
-import { validatePersistedAggregate } from '../extensions/agent-observation/core.ts'
+import { MAX_PRIVATE_STATE_BYTES, readPrivateState, validatePersistedAggregate } from '../extensions/agent-observation/core.ts'
 import { collectConfiguredAgentModelIds, normalizeModelId } from './validate-agent-models.mjs'
 
 export const SCHEMA_VERSION = 1
@@ -66,6 +65,7 @@ const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/+@:-]{0,199}$/
 const STATE_LOCK_FILE = '.operation.lock'
 const STATE_LOCK_ERROR = 'observation operation already in progress'
+const MISSING_PRIVATE_JSON = Symbol('missing private JSON')
 
 function defaultStateRoot() {
   return join(process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'skills-agent-observation')
@@ -247,9 +247,28 @@ function pendingFinishPath(stateRoot) {
   return join(normalizeAbsolutePath(stateRoot), PENDING_FINISH_FILE)
 }
 
-function readJson(path, errorMessage) {
+export function readPrivateText(path, maxBytes = MAX_PRIVATE_STATE_BYTES) {
   try {
-    return JSON.parse(readFileSync(path, 'utf8'))
+    return readPrivateState(path, maxBytes).toString('utf8')
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw error
+    throw new Error('invalid private state')
+  }
+}
+
+function readJson(path, errorMessage, { missing = 'error' } = {}) {
+  let text
+  try {
+    text = readPrivateText(path)
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      if (missing === 'null') return MISSING_PRIVATE_JSON
+      if (missing !== 'error') throw new Error(missing)
+    }
+    throw new Error(errorMessage)
+  }
+  try {
+    return JSON.parse(text)
   } catch {
     throw new Error(errorMessage)
   }
@@ -269,15 +288,7 @@ function validatePointer(pointer) {
 
 function readActivePointer(stateRoot) {
   const path = activePointerPath(stateRoot)
-  let info
-  try {
-    info = lstatSync(path)
-  } catch (error) {
-    if (error?.code === 'ENOENT') throw new Error('cohort not found')
-    throw new Error('invalid cohort')
-  }
-  if (!info.isFile() || info.isSymbolicLink()) throw new Error('invalid cohort')
-  return validatePointer(readJson(path, 'invalid cohort'))
+  return validatePointer(readJson(path, 'invalid cohort', { missing: 'cohort not found' }))
 }
 
 function pendingFinishExists(stateRoot) {
@@ -297,15 +308,8 @@ function assertCohortNotFinishing(stateRoot) {
 
 function readPendingFinish(stateRoot) {
   const path = pendingFinishPath(stateRoot)
-  let info
-  try {
-    info = lstatSync(path)
-  } catch (error) {
-    if (error?.code === 'ENOENT') return null
-    throw new Error('invalid cohort')
-  }
-  if (!info.isFile() || info.isSymbolicLink()) throw new Error('invalid cohort')
-  const pending = readJson(path, 'invalid cohort')
+  const pending = readJson(path, 'invalid cohort', { missing: 'null' })
+  if (pending === MISSING_PRIVATE_JSON) return null
   const keys = Object.keys(pending ?? {}).sort()
   if (keys.length !== 4 || keys.join(',') !== 'commit,finishedAt,schemaVersion,shortHead'
     || pending.schemaVersion !== SCHEMA_VERSION
@@ -608,8 +612,8 @@ function clearStaleAggregate(directory) {
 
 function readLegacyAggregate(cohort) {
   const path = join(cohort.directory, REPORT_FILE)
-  if (!ownedReadableRegularFile(path)) return null
-  const persisted = readJson(path, 'invalid aggregate report')
+  const persisted = readJson(path, 'invalid aggregate report', { missing: 'null' })
+  if (persisted === MISSING_PRIVATE_JSON) return null
   if (persisted?.schemaVersion !== SCHEMA_VERSION || typeof persisted.generatedAt !== 'string'
     || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(persisted.generatedAt) === false
     || !Number.isSafeInteger(persisted.fileCount) || persisted.fileCount < 0 || !persisted.aggregate) {
@@ -622,15 +626,8 @@ function readLegacyAggregate(cohort) {
 
 function readAutomationSnapshot(cohort) {
   const path = join(cohort.directory, AUTOMATION_STATE_FILE)
-  let info
-  try {
-    info = lstatSync(path)
-  } catch (error) {
-    if (error?.code === 'ENOENT') return null
-    throw new Error('invalid automation state')
-  }
-  if (!info.isFile() || info.isSymbolicLink()) throw new Error('invalid automation state')
-  const value = readJson(path, 'invalid automation state')
+  const value = readJson(path, 'invalid automation state', { missing: 'null' })
+  if (value === MISSING_PRIVATE_JSON) return null
   const keys = Object.keys(value ?? {}).sort()
   if (keys.length !== 5 || keys.join(',') !== 'aggregate,commit,schemaVersion,sessions,updatedAt'
     || value.schemaVersion !== SCHEMA_VERSION || value.commit !== cohort.metadata.commit
@@ -699,7 +696,7 @@ function incidentCounts(path) {
   const counts = Object.fromEntries(INCIDENT_CATEGORIES.map((category) => [category, 0]))
   let text
   try {
-    text = readFileSync(path, 'utf8')
+    text = readPrivateText(path)
   } catch {
     throw new Error('could not read incident storage')
   }

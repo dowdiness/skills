@@ -458,15 +458,42 @@ function validateState(value: any, cohort: CohortInfo): AutomationState | null {
   return { schemaVersion: AUTOMATION_SCHEMA_VERSION, commit: cohort.commit, updatedAt: value.updatedAt, aggregate: mergeUsageReports([value.aggregate as UsageReport], cohort), sessions: value.sessions as Record<string, string[]> };
 }
 
+const INVALID_AUTOMATION_STATE = "invalid automation state";
+
+function readExistingObject(path: string): Record<string, any> | null {
+  let info;
+  try {
+    info = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    throw new Error(INVALID_AUTOMATION_STATE);
+  }
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error(INVALID_AUTOMATION_STATE);
+  try {
+    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(INVALID_AUTOMATION_STATE);
+    return value as Record<string, any>;
+  } catch (error) {
+    if (error instanceof Error && error.message === INVALID_AUTOMATION_STATE) throw error;
+    throw new Error(INVALID_AUTOMATION_STATE);
+  }
+}
+
 function readAutomationState(cohort: CohortInfo): AutomationState | null {
-  const value = readObject(join(cohort.directory, AUTOMATION_STATE_FILE));
-  return value ? validateState(value, cohort) : null;
+  const value = readExistingObject(join(cohort.directory, AUTOMATION_STATE_FILE));
+  if (!value) return null;
+  const state = validateState(value, cohort);
+  if (!state) throw new Error(INVALID_AUTOMATION_STATE);
+  return state;
 }
 
 function readLegacyAggregate(cohort: CohortInfo): UsageReport | null {
-  const value = readObject(join(cohort.directory, REPORT_FILE));
-  if (!value || value.schemaVersion !== 1 || typeof value.generatedAt !== "string" || !ISO_PATTERN.test(value.generatedAt)
-    || !Number.isSafeInteger(value.fileCount) || value.fileCount < 0 || !value.aggregate || typeof value.aggregate !== "object") return null;
+  const value = readExistingObject(join(cohort.directory, REPORT_FILE));
+  if (!value) return null;
+  if (value.schemaVersion !== 1 || typeof value.generatedAt !== "string" || !ISO_PATTERN.test(value.generatedAt)
+    || !Number.isSafeInteger(value.fileCount) || value.fileCount < 0 || !value.aggregate || typeof value.aggregate !== "object" || Array.isArray(value.aggregate)) {
+    throw new Error(INVALID_AUTOMATION_STATE);
+  }
   return mergeUsageReports([value.aggregate as UsageReport], cohort);
 }
 
@@ -505,9 +532,10 @@ export function checkpoint(options: { stateRoot?: string; sessionId: string; ent
   return withLock(stateRoot, () => {
     const cohort = readCohort(stateRoot);
     if (!cohort) return null;
+    const current = readAutomationState(cohort);
+    const legacy = !current ? readLegacyAggregate(cohort) : null;
     const key = ensureKey(cohort);
     const identity = sessionIdentity(key, options.sessionId);
-    const current = readAutomationState(cohort);
     const fingerprints = options.entries.map((entry) => entryFingerprint(key, entry));
     const previous = current?.sessions[identity];
     const sessions = { ...(current?.sessions ?? {}) };
@@ -519,7 +547,6 @@ export function checkpoint(options: { stateRoot?: string; sessionId: string; ent
         ? mergeUsageReports([current.aggregate, aggregateSessionRecords(unseen, cohort)], cohort)
         : current.aggregate;
     } else {
-      const legacy = !current ? readLegacyAggregate(cohort) : null;
       if (legacy) {
         aggregate = legacy;
       } else {

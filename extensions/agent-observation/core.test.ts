@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -124,6 +124,101 @@ test("legacy aggregate migration baselines current entries without recounting", 
   rmSync(join(f.cohort, AUTOMATION_STATE_FILE));
   expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "legacy", entries: invocation })?.invocationCount).toBe(1);
   expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "legacy", entries: [...invocation, call("new"), result("new")] })?.invocationCount).toBe(2);
+});
+
+test("invalid existing automation state fails closed without mutating private state", () => {
+  for (const invalidState of [
+    "malformed JSON",
+    (state: Record<string, unknown>) => JSON.stringify({ ...state, schemaVersion: 99 }),
+  ] as const) {
+    const f = fixture();
+    checkpoint({ stateRoot: f.stateRoot, sessionId: "seed", entries: [call("seed"), result("seed")] });
+    const statePath = join(f.cohort, AUTOMATION_STATE_FILE);
+    const keyPath = join(f.cohort, AUTOMATION_KEY_FILE);
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    const content = typeof invalidState === "string" ? invalidState : invalidState(state);
+    writeFileSync(statePath, content);
+    const keyBefore = readFileSync(keyPath);
+    let writeCalled = false;
+    expect(() => checkpoint({
+      stateRoot: f.stateRoot,
+      sessionId: "new",
+      entries: [call("new"), result("new")],
+      writeState: () => { writeCalled = true; },
+    })).toThrow("invalid automation state");
+    expect(writeCalled).toBe(false);
+    expect(readFileSync(statePath, "utf8")).toBe(content);
+    expect(readFileSync(keyPath)).toEqual(keyBefore);
+  }
+});
+
+test("automation state symlinks fail closed without replacing the link or target", () => {
+  for (const broken of [false, true]) {
+    const f = fixture();
+    checkpoint({ stateRoot: f.stateRoot, sessionId: "seed", entries: [call("seed"), result("seed")] });
+    const statePath = join(f.cohort, AUTOMATION_STATE_FILE);
+    const keyPath = join(f.cohort, AUTOMATION_KEY_FILE);
+    const target = join(f.stateRoot, broken ? "missing-state-target" : "state-target");
+    if (!broken) writeFileSync(target, "private target\n");
+    rmSync(statePath);
+    symlinkSync(target, statePath);
+    const keyBefore = readFileSync(keyPath);
+    const targetBefore = broken ? null : readFileSync(target, "utf8");
+    expect(() => checkpoint({ stateRoot: f.stateRoot, sessionId: "new", entries: [] })).toThrow("invalid automation state");
+    expect(lstatSync(statePath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(statePath)).toBe(target);
+    if (broken) expect(() => lstatSync(target)).toThrow();
+    else expect(readFileSync(target, "utf8")).toBe(targetBefore);
+    expect(readFileSync(keyPath)).toEqual(keyBefore);
+  }
+});
+
+test("invalid legacy reports fail closed without creating automation state", () => {
+  for (const invalidReport of [
+    "malformed JSON",
+    JSON.stringify({ schemaVersion: 99 }),
+  ]) {
+    const f = fixture();
+    const reportPath = join(f.cohort, "latest-report.json");
+    writeFileSync(reportPath, invalidReport);
+    expect(() => checkpoint({ stateRoot: f.stateRoot, sessionId: "legacy", entries: [] })).toThrow("invalid automation state");
+    expect(readFileSync(reportPath, "utf8")).toBe(invalidReport);
+    expect(() => readFileSync(join(f.cohort, AUTOMATION_KEY_FILE))).toThrow();
+    expect(() => readFileSync(join(f.cohort, AUTOMATION_STATE_FILE))).toThrow();
+  }
+});
+
+test("legacy report symlinks fail closed without replacing the link or target", () => {
+  for (const broken of [false, true]) {
+    const f = fixture();
+    const reportPath = join(f.cohort, "latest-report.json");
+    const target = join(f.stateRoot, broken ? "missing-report-target" : "report-target");
+    if (!broken) writeFileSync(target, "private legacy target\n");
+    symlinkSync(target, reportPath);
+    expect(() => checkpoint({ stateRoot: f.stateRoot, sessionId: "legacy", entries: [] })).toThrow("invalid automation state");
+    expect(lstatSync(reportPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(reportPath)).toBe(target);
+    if (broken) expect(() => lstatSync(target)).toThrow();
+    else expect(readFileSync(target, "utf8")).toBe("private legacy target\n");
+    expect(() => readFileSync(join(f.cohort, AUTOMATION_KEY_FILE))).toThrow();
+    expect(() => readFileSync(join(f.cohort, AUTOMATION_STATE_FILE))).toThrow();
+  }
+});
+
+test("unreadable legacy reports fail closed", () => {
+  const f = fixture();
+  const reportPath = join(f.cohort, "latest-report.json");
+  const content = "private legacy report\n";
+  writeFileSync(reportPath, content, { mode: 0o600 });
+  chmodSync(reportPath, 0o000);
+  try {
+    expect(() => checkpoint({ stateRoot: f.stateRoot, sessionId: "legacy", entries: [] })).toThrow("invalid automation state");
+  } finally {
+    chmodSync(reportPath, 0o600);
+  }
+  expect(readFileSync(reportPath, "utf8")).toBe(content);
+  expect(() => readFileSync(join(f.cohort, AUTOMATION_KEY_FILE))).toThrow();
+  expect(() => readFileSync(join(f.cohort, AUTOMATION_STATE_FILE))).toThrow();
 });
 
 test("globally copied fork history is counted once and known resumes recover results", () => {

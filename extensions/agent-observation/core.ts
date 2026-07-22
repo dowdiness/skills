@@ -513,19 +513,22 @@ export function checkpoint(options: { stateRoot?: string; sessionId: string; ent
     const sessions = { ...(current?.sessions ?? {}) };
     const globallySeen = new Set(Object.values(sessions).flat());
     let aggregate: UsageReport;
-    if (!current) {
-      const legacy = readLegacyAggregate(cohort);
-      if (legacy) {
-        aggregate = legacy;
-      } else {
-        const unseen = firstActivationEntries(options.entries, fingerprints, globallySeen, cohort.startedAt);
-        aggregate = mergeUsageReports([emptyReport(cohort.agentNames), aggregateSessionRecords(unseen, cohort)], cohort);
-      }
-    } else {
+    if (previous !== undefined && current) {
       const unseen = options.entries.filter((_entry, index) => !globallySeen.has(fingerprints[index]));
       aggregate = unseen.length > 0
         ? mergeUsageReports([current.aggregate, aggregateSessionRecords(unseen, cohort)], cohort)
         : current.aggregate;
+    } else {
+      const legacy = !current ? readLegacyAggregate(cohort) : null;
+      if (legacy) {
+        aggregate = legacy;
+      } else {
+        const unseen = firstActivationEntries(options.entries, fingerprints, globallySeen, cohort.startedAt);
+        const base = current?.aggregate ?? emptyReport(cohort.agentNames);
+        aggregate = unseen.length > 0
+          ? mergeUsageReports([base, aggregateSessionRecords(unseen, cohort)], cohort)
+          : base;
+      }
     }
     sessions[identity] = [...new Set([...(previous ?? []), ...fingerprints])].sort();
     const state: AutomationState = {

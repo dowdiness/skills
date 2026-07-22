@@ -87,6 +87,31 @@ test("first activation counts only complete post-start invocations", () => {
   expect(checkpoint({ stateRoot: spanning.stateRoot, sessionId: "spanning", entries: [preCall, preResult] })?.invocationCount).toBe(0);
 });
 
+test("an unknown resumed session uses the post-start filter after automation state exists", () => {
+  const f = fixture();
+  expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "seed", entries: [] })?.invocationCount).toBe(0);
+  const preCall = { ...call("old-pre"), timestamp: "2025-12-31T23:59:59.000Z" };
+  const preResult = { ...result("old-pre"), timestamp: "2026-01-01T00:00:00.500Z" };
+  const postCall = { ...call("old-post"), timestamp: "2026-01-01T00:00:01.000Z" };
+  const postResult = { ...result("old-post"), timestamp: "2026-01-01T00:00:02.000Z" };
+  expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "old-session", entries: [preCall, preResult, postCall, postResult] })?.invocationCount).toBe(1);
+});
+
+test("an unknown fork does not recount globally seen copied history after automation state exists", () => {
+  const f = fixture();
+  const copied = [call("seen-copy"), result("seen-copy")];
+  expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "source", entries: copied })?.invocationCount).toBe(1);
+  expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "fork", entries: copied })?.invocationCount).toBe(1);
+});
+
+test("an unknown copied invocation is counted once before its source activates", () => {
+  const f = fixture();
+  const copied = [call("unobserved-copy"), result("unobserved-copy")];
+  expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "seed", entries: [] })?.invocationCount).toBe(0);
+  expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "fork", entries: copied })?.invocationCount).toBe(1);
+  expect(checkpoint({ stateRoot: f.stateRoot, sessionId: "source", entries: copied })?.invocationCount).toBe(1);
+});
+
 test("legacy aggregate migration baselines current entries without recounting", () => {
   const f = fixture();
   const invocation = [call("legacy"), result("legacy")];

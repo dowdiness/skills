@@ -71,12 +71,21 @@ The packaged `agent-observation` extension checkpoints startup/reload/new/resume
 tree navigation, settled turns, and shutdown. It never finishes a cohort. A user
 may say `観測に記録して`; only then does the agent call `record_observation`.
 The tool validates the snapshotted agent, strict category/severity, and bounded
-note, and returns only an opaque case ID and category. Use `saveToMemory=true`
-only when the user explicitly asks to both record and remember the feedback; it
-creates a correlated sanitized Markdown memory under
-`~/.Codex/skills/agent-memory/memories/agent-observations/`. The combined write
-uses best-effort rollback on ordinary failure; cross-directory crash consistency
-cannot be made fully atomic.
+note, and returns an opaque case ID and category (plus an explicit memory-saved indication for dual writes). Use `saveToMemory=true`
+only when the latest user message satisfies the small dual-save contract: it must
+affirmatively mention observation/incident, memory/remember, and record/save (for
+example, `観測とメモリに記録して` or `record this incident and save it to memory`).
+Questions, quoted text, negations, missing host entries, and a tool parameter alone
+are rejected. The latest text is read only from in-memory session entries and is
+never persisted. A successful dual save says that memory was saved and creates a
+correlated sanitized Markdown memory under
+`~/.Codex/skills/agent-memory/memories/agent-observations/`. Existing memory roots
+and categories must be owned by the current user, non-symlink directories, and not
+group/world writable; new categories are created owner-only after root validation.
+The category is held open and its device/inode is checked around pathname writes.
+The combined write uses best-effort rollback on ordinary failure. Same-user
+malicious replacement and crash consistency remain residual constraints because
+Node's available pathname operations cannot provide fully atomic `openat` writes.
 
 `start` requires a clean Git worktree and creates a private cohort under
 `$XDG_STATE_HOME/skills-agent-observation/<short-head>` (or

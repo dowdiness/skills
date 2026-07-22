@@ -85,10 +85,28 @@ test("registers all automatic lifecycle checkpoints and records only explicitly 
   expect(result).not.toHaveProperty("details");
   const incidents = readFileSync(join(f.cohort, "incidents.tsv"), "utf8");
   expect(incidents).toContain("\tworker\twrong_route\tlow\tshort operator note\n");
+  c.entries.push({ type: "message", message: { role: "user", content: [{ type: "text", text: "観測とメモリに記録して" }] } });
   const memoryResult = await tool.execute("opaque-remember", { agent: "worker", category: "wrong_route", severity: "low", note: "remember this operator note", saveToMemory: true }, undefined, undefined, c.ctx);
-  expect(memoryResult.content[0].text).toMatch(/^Recorded case-[a-f0-9]{18} \(wrong_route\)\.$/);
+  expect(memoryResult.content[0].text).toMatch(/^Recorded case-[a-f0-9]{18} \(wrong_route\)\. Memory saved\.$/);
   const memoryId = memoryResult.content[0].text.match(/case-[a-f0-9]{18}/u)![0];
   expect(readFileSync(join(memoryRoot, "agent-observations", `${memoryId}.md`), "utf8")).toContain(`Case ID: ${memoryId}`);
+});
+
+test("dual save requires an available affirmative latest user entry", async () => {
+  const f = activeFixture();
+  process.env.XDG_STATE_HOME = join(f.root, "state");
+  const handlers = new Map<string, any>();
+  let tool: any;
+  const pi = { on: (name: string, handler: any) => handlers.set(name, handler), registerTool: (definition: any) => { tool = definition; } } as any;
+  factory(pi, { memoryRoot: join(f.root, "memories") });
+  const c = context();
+  let rejected: unknown;
+  try {
+    await tool.execute("opaque", { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true }, undefined, undefined, c.ctx);
+  } catch (error) { rejected = error; }
+  expect(rejected).toBeInstanceOf(Error);
+  expect((rejected as Error).message).toBe("Observation could not be recorded.");
+  expect(readFileSync(join(f.cohort, "incidents.tsv"), "utf8")).toBe("");
 });
 
 test("scheduler children and ephemeral sessions are no-ops", async () => {

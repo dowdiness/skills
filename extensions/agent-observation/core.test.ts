@@ -1,11 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, fstatSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { AUTOMATION_KEY_FILE, AUTOMATION_STATE_FILE, INCIDENT_FILE, LOCK_FILE, aggregateSessionRecords, canonicalEntry, checkpoint, entryFingerprint, readPrivateState, recordIncident, renderObservationMemory } from "./core.ts";
+import { AUTOMATION_KEY_FILE, AUTOMATION_STATE_FILE, INCIDENT_FILE, LOCK_FILE, aggregateSessionRecords, canonicalEntry, checkpoint, entryFingerprint, hasDualSaveConsent, latestUserMessageText, readPrivateState, recordIncident, renderObservationMemory, validateIncident } from "./core.ts";
 
 const fixtureRoots: string[] = [];
 afterEach(() => {
@@ -31,6 +31,7 @@ function fixture() {
 
 const call = (id: string, parentId: string | null = null) => ({ type: "message", id, parentId, timestamp: "2026-01-01T00:00:01.000Z", message: { content: [{ type: "toolCall", name: "subagent", id: `call-${id}`, arguments: { agent: "worker", task: "private task", cwd: "/private/path" } }] } });
 const result = (id: string, parentId: string | null = null) => ({ type: "message", id, parentId, timestamp: "2026-01-01T00:00:02.000Z", message: { toolName: "subagent", toolCallId: `call-${id}`, details: { results: [{ agent: "worker", model: "test/model", exitCode: 0 }] } } });
+const consentEntries = [{ type: "message", message: { role: "user", content: [{ type: "text", text: "観測とメモリに記録して" }] } }];
 
  test("unknown sessions baseline, known sessions recover, fork copies baseline, and stale instances re-read state", () => {
   const f = fixture();
@@ -342,7 +343,7 @@ test("observation memory is omitted for the compatible incident-only flow", () =
 test("dual recording writes one correlated incident and contract-valid memory", () => {
   const f = fixture();
   const memoryRoot = join(f.stateRoot, "memory");
-  const result = recordIncident({ stateRoot: f.stateRoot, memoryRoot, now: new Date("2026-02-03T04:05:06.000Z"), incident: { agent: "worker", category: "wrong_route", severity: "high", note: "short operator note", saveToMemory: true } })!;
+  const result = recordIncident({ stateRoot: f.stateRoot, memoryRoot, now: new Date("2026-02-03T04:05:06.000Z"), incident: { agent: "worker", category: "wrong_route", severity: "high", note: "short operator note", saveToMemory: true }, sessionEntries: consentEntries })!;
   const memory = readFileSync(join(memoryRoot, "agent-observations", `${result.id}.md`), "utf8");
   expect(memory).toContain(`summary: \"Agent observation ${result.id} (wrong_route)\"`);
   expect(memory).toContain("created: 2026-02-03");
@@ -354,12 +355,38 @@ test("dual recording writes one correlated incident and contract-valid memory", 
   expect(memory).not.toMatch(/task|response|session|cwd|repository|path|model|token|credential/iu);
   expect(readFileSync(join(f.cohort, INCIDENT_FILE), "utf8")).toContain(`${result.id}\t2026-02-03T04:05:06.000Z\tworker\twrong_route\thigh\tshort operator note\n`);
   expect(statSync(join(memoryRoot, "agent-observations", `${result.id}.md`)).mode & 0o777).toBe(0o600);
+  expect(result.memorySaved).toBe(true);
+});
+
+test("dual-save consent is affirmative, latest-user-only, and never inferred from parameters", () => {
+  expect(hasDualSaveConsent("観測とメモリに記録して")).toBe(true);
+  expect(hasDualSaveConsent("record this incident and save it to memory")).toBe(true);
+  expect(hasDualSaveConsent("観測とメモリに記録しないで")).toBe(false);
+  expect(hasDualSaveConsent('Please record “this observation” and save it to memory')).toBe(false);
+  expect(hasDualSaveConsent("Should I record this observation and save it to memory?")).toBe(false);
+  expect(latestUserMessageText([{ message: { role: "assistant", content: "観測とメモリに記録して" } }, ...consentEntries])).toBe("観測とメモリに記録して");
+  expect(latestUserMessageText([{ message: { role: "user", content: "観測に記録して" } }])).toBe("観測に記録して");
+  const f = fixture();
+  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot: join(f.stateRoot, "memory"), incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true } })).toThrow("dual-save consent required");
+  expect(readFileSync(join(f.cohort, INCIDENT_FILE), "utf8")).toBe("");
+});
+
+test("memory-bound note validation rejects every newly sensitive class before either artifact", () => {
+  const f = fixture();
+  const memoryRoot = join(f.stateRoot, "memory");
+  const notes = ["model", "response", "path", "repository", "repo", "モデル", "応答", "レスポンス", "パス", "リポジトリ", "セッション", "タスク", "トークン", "認証情報", "資格情報"];
+  for (const note of notes) {
+    expect(() => validateIncident({ agent: "worker", category: "wrong_route", severity: "low", note }, new Set(["worker"]))).toThrow("invalid incident note");
+    expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, incident: { agent: "worker", category: "wrong_route", severity: "low", note, saveToMemory: true }, sessionEntries: consentEntries })).toThrow("invalid incident note");
+  }
+  expect(readFileSync(join(f.cohort, INCIDENT_FILE), "utf8")).toBe("");
+  expect(() => lstatSync(memoryRoot)).toThrow();
 });
 
 test("unsafe dual-save input is rejected before either write", () => {
   const f = fixture();
   const memoryRoot = join(f.stateRoot, "memory");
-  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "leak /private/path", saveToMemory: true } })).toThrow("invalid incident note");
+  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "leak /private/path", saveToMemory: true }, sessionEntries: consentEntries })).toThrow("invalid incident note");
   expect(readFileSync(join(f.cohort, INCIDENT_FILE), "utf8")).toBe("");
   expect(() => lstatSync(memoryRoot)).toThrow();
 });
@@ -369,26 +396,56 @@ test("memory category and destination collisions fail closed", () => {
   const memoryRoot = join(f.stateRoot, "memory");
   mkdirSync(memoryRoot, { recursive: true });
   symlinkSync(join(f.stateRoot, "elsewhere"), join(memoryRoot, "agent-observations"));
-  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true } })).toThrow("invalid observation memory category");
+  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true }, sessionEntries: consentEntries })).toThrow("invalid observation memory category");
   expect(readFileSync(join(f.cohort, INCIDENT_FILE), "utf8")).toBe("");
 
   rmSync(join(memoryRoot, "agent-observations"));
   mkdirSync(join(memoryRoot, "agent-observations"));
   const filesystem = { lstatSync: (path: string) => path.endsWith(".md") ? { isSymbolicLink: () => true, isDirectory: () => false } as any : lstatSync(path) };
-  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, filesystem, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true } })).toThrow("observation memory already exists");
+  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, filesystem, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true }, sessionEntries: consentEntries })).toThrow("observation memory already exists");
   expect(readFileSync(join(f.cohort, INCIDENT_FILE), "utf8")).toBe("");
+});
+
+test("existing memory directories must be private, owned directories and are never chmodded", () => {
+  const f = fixture();
+  const memoryRoot = join(f.stateRoot, "memory");
+  mkdirSync(memoryRoot, { mode: 0o700 });
+  chmodSync(memoryRoot, 0o722);
+  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true }, sessionEntries: consentEntries })).toThrow("invalid observation memory root");
+  expect(statSync(memoryRoot).mode & 0o777).toBe(0o722);
+
+  chmodSync(memoryRoot, 0o700);
+  const category = join(memoryRoot, "agent-observations");
+  mkdirSync(category, { mode: 0o700 });
+  chmodSync(category, 0o722);
+  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true }, sessionEntries: consentEntries })).toThrow("invalid observation memory category");
+  expect(statSync(category).mode & 0o777).toBe(0o722);
+});
+
+test("category identity changes fail closed without leaving a temporary artifact", () => {
+  const f = fixture();
+  const memoryRoot = join(f.stateRoot, "memory");
+  let fstatCalls = 0;
+  const filesystem = { fstatSync: (fd: number) => {
+    const info = fstatSync(fd);
+    return fstatCalls++ === 3 ? { ...info, ino: info.ino + 1 } as any : info;
+  } };
+  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, filesystem, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true }, sessionEntries: consentEntries })).toThrow("could not write observation memory");
+  expect(readFileSync(join(f.cohort, INCIDENT_FILE), "utf8")).toBe("");
+  expect(() => lstatSync(join(memoryRoot, "agent-observations"))).toThrow();
 });
 
 test("dual-save failures do not report success and roll back the incident", () => {
   const f = fixture();
   const memoryRoot = join(f.stateRoot, "memory");
   const filesystem = { renameSync: () => { throw new Error("injected failure"); } };
-  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, filesystem, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true } })).toThrow("could not write observation memory");
+  expect(() => recordIncident({ stateRoot: f.stateRoot, memoryRoot, filesystem, incident: { agent: "worker", category: "wrong_route", severity: "low", note: "short", saveToMemory: true }, sessionEntries: consentEntries })).toThrow("could not write observation memory");
   expect(readFileSync(join(f.cohort, INCIDENT_FILE), "utf8")).toBe("");
 });
 
 test("memory rendering is pure and rejects invalid documents", () => {
   expect(renderObservationMemory({ caseId: "case-aaaaaaaaaaaaaaaaaa", date: "2026-02-03", agent: "worker", category: "wrong_route", severity: "low", note: "short" })).toContain("created: 2026-02-03");
+  expect(() => renderObservationMemory({ caseId: "case-aaaaaaaaaaaaaaaaaa", date: "2026-02-03", agent: "worker", category: "wrong_route", severity: "low", note: "model" })).toThrow("invalid observation memory");
   expect(() => renderObservationMemory({ caseId: "not-a-case", date: "2026-02-03", agent: "worker", category: "wrong_route", severity: "low", note: "short" })).toThrow("invalid observation memory");
 });
 

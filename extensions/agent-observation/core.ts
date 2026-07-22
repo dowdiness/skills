@@ -661,6 +661,7 @@ export interface ObservationMemoryFilesystem {
   lstatSync: typeof lstatSync;
   mkdirSync: typeof mkdirSync;
   openSync: typeof openSync;
+  fstatSync: typeof fstatSync;
   writeFileSync: typeof writeFileSync;
   fchmodSync: typeof fchmodSync;
   fsyncSync: typeof fsyncSync;
@@ -683,6 +684,7 @@ const MEMORY_FILESYSTEM: ObservationMemoryFilesystem = {
   lstatSync,
   mkdirSync,
   openSync,
+  fstatSync,
   writeFileSync,
   fchmodSync,
   fsyncSync,
@@ -696,20 +698,77 @@ export function defaultMemoryRoot(): string {
   return join(homedir(), ".Codex", "skills", "agent-memory", "memories");
 }
 
+const DUAL_SAVE_JAPANESE_PATTERN = /観測/u;
+const DUAL_SAVE_JAPANESE_MEMORY_PATTERN = /メモリ/u;
+const DUAL_SAVE_JAPANESE_ACTION_PATTERN = /(?:記録|保存)/u;
+const DUAL_SAVE_ENGLISH_PATTERN = /\b(?:observation|incident)\b/iu;
+const DUAL_SAVE_ENGLISH_MEMORY_PATTERN = /\b(?:memory|remember)\b/iu;
+const DUAL_SAVE_ENGLISH_ACTION_PATTERN = /\b(?:record|save)\b/iu;
+const DUAL_SAVE_NEGATION_PATTERN = /(?:\b(?:cannot|can't|couldn't|don't|doesn't|isn't|never|no|not|shouldn't|without|won't)\b|しない|しません|しないで|ない|ません|禁止|不要|ず)/iu;
+const DUAL_SAVE_AMBIGUOUS_PATTERN = /(?:\b(?:maybe|perhaps|should|could|might|whether|wonder|think)\b|かな|かも|でしょう|ですか|ますか)/iu;
+
+/**
+ * The dual-save contract is intentionally small: the latest user message must
+ * affirmatively mention observation/incident, memory/remember, and record/save.
+ * Questions, quoted text, and negations are not consent.
+ */
+export function hasDualSaveConsent(text: unknown): boolean {
+  if (typeof text !== "string" || text.trim().length === 0) return false;
+  if (/[?？]|["“”「」『』`]/u.test(text)
+    || /(?:^|\s)'[^'\n]+'(?=\s|$|[.,!?])/u.test(text)
+    || DUAL_SAVE_NEGATION_PATTERN.test(text)
+    || DUAL_SAVE_AMBIGUOUS_PATTERN.test(text)) return false;
+  const japanese = DUAL_SAVE_JAPANESE_PATTERN.test(text)
+    && DUAL_SAVE_JAPANESE_MEMORY_PATTERN.test(text)
+    && DUAL_SAVE_JAPANESE_ACTION_PATTERN.test(text);
+  const english = DUAL_SAVE_ENGLISH_PATTERN.test(text)
+    && DUAL_SAVE_ENGLISH_MEMORY_PATTERN.test(text)
+    && DUAL_SAVE_ENGLISH_ACTION_PATTERN.test(text);
+  return japanese || english;
+}
+
+function textFromUserEntry(entry: unknown): string | undefined {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+  const value = entry as Record<string, unknown>;
+  const message = value.message && typeof value.message === "object" && !Array.isArray(value.message)
+    ? value.message as Record<string, unknown>
+    : value;
+  if (message.role !== "user") return undefined;
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content.map((item) => {
+    if (typeof item === "string") return item;
+    if (item && typeof item === "object" && !Array.isArray(item) && typeof (item as Record<string, unknown>).text === "string") {
+      return (item as Record<string, string>).text;
+    }
+    return "";
+  }).join("");
+  return text.length > 0 ? text : undefined;
+}
+
+/** Return only the latest user-authored text from the caller's in-memory entries. */
+export function latestUserMessageText(entries: unknown): string | undefined {
+  if (!Array.isArray(entries)) return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const text = textFromUserEntry(entries[index]);
+    if (text !== undefined) return text;
+  }
+  return undefined;
+}
+
 function memoryError(message: string): Error {
   return new Error(message);
 }
 
 function validMemoryDocument(document: ObservationMemoryDocument): boolean {
-  return isSafeCaseId(document.caseId)
-    && MEMORY_DATE_PATTERN.test(document.date)
-    && AGENT_PATTERN.test(document.agent)
-    && INCIDENT_CATEGORIES.includes(document.category as typeof INCIDENT_CATEGORIES[number])
-    && INCIDENT_SEVERITIES.includes(document.severity as typeof INCIDENT_SEVERITIES[number])
-    && typeof document.note === "string"
-    && document.note.length > 0
-    && document.note.length <= MAX_NOTE_LENGTH
-    && !/[\u0000-\u001f\u007f-\u009f]/u.test(document.note);
+  if (!isSafeCaseId(document.caseId) || !MEMORY_DATE_PATTERN.test(document.date)) return false;
+  try {
+    validateIncidentShared({ agent: document.agent, category: document.category, severity: document.severity, note: document.note }, new Set([document.agent]), MAX_NOTE_LENGTH);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Pure, allowlisted Markdown rendering for the global observation memory. */
@@ -733,25 +792,51 @@ export function renderObservationMemory(document: ObservationMemoryDocument): st
 }
 
 type MemoryFilesystemOverrides = Partial<ObservationMemoryFilesystem>;
+type DirectoryIdentity = { dev: number; ino: number };
 type MemoryTarget = { categoryDirectory: string; destination: string; filesystem: ObservationMemoryFilesystem };
 
-function inspectMemoryDirectory(path: string, filesystem: ObservationMemoryFilesystem): boolean {
+function currentUserOwns(info: { uid?: number }): boolean {
+  return typeof process.getuid !== "function" || info.uid === process.getuid();
+}
+
+function directoryIdentity(info: { dev: number; ino: number }): DirectoryIdentity {
+  return { dev: info.dev, ino: info.ino };
+}
+
+function inspectMemoryDirectory(path: string, filesystem: ObservationMemoryFilesystem, kind: "root" | "category"): DirectoryIdentity | null {
   try {
     const info = filesystem.lstatSync(path);
-    if (info.isSymbolicLink() || !info.isDirectory()) throw memoryError("invalid observation memory category");
-    return true;
+    if (info.isSymbolicLink() || !info.isDirectory() || !currentUserOwns(info) || (info.mode & 0o022) !== 0) {
+      throw memoryError(kind === "category" ? "invalid observation memory category" : "invalid observation memory root");
+    }
+    return directoryIdentity(info);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
-    if (error instanceof Error && error.message === "invalid observation memory category") throw error;
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    if (error instanceof Error && (error.message === "invalid observation memory category" || error.message === "invalid observation memory root")) throw error;
     throw memoryError("could not prepare observation memory");
   }
 }
 
-function ensureMemoryDirectory(path: string, filesystem: ObservationMemoryFilesystem): boolean {
-  if (inspectMemoryDirectory(path, filesystem)) return false;
+function ensureMemoryRoot(path: string, filesystem: ObservationMemoryFilesystem): DirectoryIdentity {
+  const existing = inspectMemoryDirectory(path, filesystem, "root");
+  if (existing) return existing;
   try {
     filesystem.mkdirSync(path, { recursive: true, mode: 0o700 });
-    if (!inspectMemoryDirectory(path, filesystem)) throw memoryError("could not prepare observation memory");
+    const created = inspectMemoryDirectory(path, filesystem, "root");
+    if (!created) throw memoryError("could not prepare observation memory");
+    return created;
+  } catch (error) {
+    if (error instanceof Error && (error.message === "invalid observation memory root" || error.message === "could not prepare observation memory")) throw error;
+    throw memoryError("could not prepare observation memory");
+  }
+}
+
+function ensureMemoryCategory(path: string, filesystem: ObservationMemoryFilesystem): boolean {
+  const existing = inspectMemoryDirectory(path, filesystem, "category");
+  if (existing) return false;
+  try {
+    filesystem.mkdirSync(path, { recursive: false, mode: 0o700 });
+    if (!inspectMemoryDirectory(path, filesystem, "category")) throw memoryError("could not prepare observation memory");
     return true;
   } catch (error) {
     if (error instanceof Error && (error.message === "invalid observation memory category" || error.message === "could not prepare observation memory")) throw error;
@@ -759,12 +844,21 @@ function ensureMemoryDirectory(path: string, filesystem: ObservationMemoryFilesy
   }
 }
 
+function assertCategoryPath(target: MemoryTarget, fd: number, expected: DirectoryIdentity): void {
+  const opened = target.filesystem.fstatSync(fd);
+  if (!opened.isDirectory() || opened.isSymbolicLink() || !currentUserOwns(opened) || (opened.mode & 0o022) !== 0
+    || opened.dev !== expected.dev || opened.ino !== expected.ino) throw memoryError("could not write observation memory");
+  const pathInfo = target.filesystem.lstatSync(target.categoryDirectory);
+  if (!pathInfo.isDirectory() || pathInfo.isSymbolicLink() || !currentUserOwns(pathInfo) || (pathInfo.mode & 0o022) !== 0
+    || pathInfo.dev !== expected.dev || pathInfo.ino !== expected.ino) throw memoryError("could not write observation memory");
+}
+
 function prepareMemoryTarget(root: string, caseId: string, filesystem: ObservationMemoryFilesystem): MemoryTarget {
-  // Validate existing ancestors/categories without chmodding them. Missing directories
-  // are created only once the incident append has succeeded.
-  inspectMemoryDirectory(root, filesystem);
+  // Validate existing directories without chmodding them. Missing directories are
+  // created only once the incident append has succeeded.
+  inspectMemoryDirectory(root, filesystem, "root");
   const categoryDirectory = join(root, OBSERVATION_MEMORY_CATEGORY);
-  const categoryExists = inspectMemoryDirectory(categoryDirectory, filesystem);
+  const categoryExists = inspectMemoryDirectory(categoryDirectory, filesystem, "category");
   const destination = join(categoryDirectory, `${caseId}.md`);
   if (categoryExists) {
     try {
@@ -782,9 +876,15 @@ function writeObservationMemory(target: MemoryTarget, root: string, content: str
   let categoryCreated = false;
   let temporary: string | undefined;
   let fd: number | undefined;
+  let categoryFd: number | undefined;
+  let destinationWritten = false;
+  let categoryIdentity: DirectoryIdentity | undefined;
   try {
-    ensureMemoryDirectory(root, target.filesystem);
-    categoryCreated = ensureMemoryDirectory(target.categoryDirectory, target.filesystem);
+    ensureMemoryRoot(root, target.filesystem);
+    categoryCreated = ensureMemoryCategory(target.categoryDirectory, target.filesystem);
+    categoryFd = target.filesystem.openSync(target.categoryDirectory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    categoryIdentity = directoryIdentity(target.filesystem.fstatSync(categoryFd));
+    assertCategoryPath(target, categoryFd, categoryIdentity);
     try {
       target.filesystem.lstatSync(target.destination);
       throw memoryError("observation memory already exists");
@@ -792,6 +892,7 @@ function writeObservationMemory(target: MemoryTarget, root: string, content: str
       if (error instanceof Error && error.message === "observation memory already exists") throw error;
       if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw memoryError("could not write observation memory");
     }
+    assertCategoryPath(target, categoryFd, categoryIdentity);
     for (;;) {
       temporary = `${target.destination}.tmp-${randomBytes(9).toString("hex")}`;
       try {
@@ -799,28 +900,46 @@ function writeObservationMemory(target: MemoryTarget, root: string, content: str
         break;
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw memoryError("could not write observation memory");
+        assertCategoryPath(target, categoryFd, categoryIdentity);
       }
     }
+    assertCategoryPath(target, categoryFd, categoryIdentity);
     target.filesystem.writeFileSync(fd, content, "utf8");
     target.filesystem.fchmodSync(fd, 0o600);
     target.filesystem.fsyncSync(fd);
     target.filesystem.closeSync(fd);
     fd = undefined;
+    assertCategoryPath(target, categoryFd, categoryIdentity);
     target.filesystem.renameSync(temporary, target.destination);
     temporary = undefined;
+    destinationWritten = true;
+    assertCategoryPath(target, categoryFd, categoryIdentity);
   } catch (error) {
     if (fd !== undefined) {
       try { target.filesystem.closeSync(fd); } catch {}
     }
-    if (temporary) {
-      try { target.filesystem.unlinkSync(temporary); } catch {}
+    if (temporary && categoryFd !== undefined && categoryIdentity) {
+      try { assertCategoryPath(target, categoryFd, categoryIdentity); target.filesystem.unlinkSync(temporary); } catch {}
+    }
+    if (destinationWritten && categoryFd !== undefined && categoryIdentity) {
+      try { assertCategoryPath(target, categoryFd, categoryIdentity); target.filesystem.unlinkSync(target.destination); } catch {}
+    }
+    if (categoryFd !== undefined) {
+      try { target.filesystem.closeSync(categoryFd); } catch {}
     }
     if (categoryCreated) {
-      try { target.filesystem.rmdirSync(target.categoryDirectory); } catch {}
+      try {
+        const category = target.filesystem.lstatSync(target.categoryDirectory);
+        if (categoryIdentity && category.isDirectory() && !category.isSymbolicLink() && currentUserOwns(category)
+          && (category.mode & 0o022) === 0 && category.dev === categoryIdentity.dev && category.ino === categoryIdentity.ino) {
+          target.filesystem.rmdirSync(target.categoryDirectory);
+        }
+      } catch {}
     }
     if (error instanceof Error && ["observation memory already exists", "could not write observation memory"].includes(error.message)) throw error;
     throw memoryError("could not write observation memory");
   }
+  if (categoryFd !== undefined) target.filesystem.closeSync(categoryFd);
 }
 
 type IncidentSnapshot = { size: number; dev: number; ino: number };
@@ -848,7 +967,7 @@ function rollbackIncident(path: string, snapshot: IncidentSnapshot): void {
   }
 }
 
-export function recordIncident(options: { stateRoot?: string; incident: unknown; now?: Date; saveToMemory?: boolean; memoryRoot?: string; filesystem?: MemoryFilesystemOverrides }): { id: string; category: string } | null {
+export function recordIncident(options: { stateRoot?: string; incident: unknown; now?: Date; saveToMemory?: boolean; memoryRoot?: string; filesystem?: MemoryFilesystemOverrides; sessionEntries?: unknown }): { id: string; category: string; memorySaved: boolean } | null {
   const stateRoot = options.stateRoot ?? stateRootDefault();
   return withLock(stateRoot, () => {
     const cohort = readCohort(stateRoot);
@@ -858,6 +977,7 @@ export function recordIncident(options: { stateRoot?: string; incident: unknown;
     if (raw && typeof raw === "object" && raw.saveToMemory !== undefined && typeof raw.saveToMemory !== "boolean") throw new Error("invalid observation option");
     const saveToMemory = options.saveToMemory ?? (raw?.saveToMemory === true);
     const incident = validateIncident(options.incident, cohort.agentNames);
+    if (saveToMemory && !hasDualSaveConsent(latestUserMessageText(options.sessionEntries))) throw new Error("dual-save consent required");
     const id = `case-${randomBytes(9).toString("hex")}`;
     const timestamp = (options.now ?? new Date()).toISOString();
     const memoryRoot = options.memoryRoot ?? defaultMemoryRoot();
@@ -877,7 +997,7 @@ export function recordIncident(options: { stateRoot?: string; incident: unknown;
         throw error;
       }
     }
-    return { id, category: incident.category };
+    return { id, category: incident.category, memorySaved: memory !== null };
   });
 }
 

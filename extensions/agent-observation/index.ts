@@ -27,10 +27,10 @@ export interface AgentObservationDependencies {
   filesystem?: Partial<ObservationMemoryFilesystem>;
 }
 
-const PROMPT_SNIPPET = "record_observation: record feedback only after an explicit request; set saveToMemory=true only when the user explicitly asks to record AND remember it; never infer or guess.";
+const PROMPT_SNIPPET = "record_observation: record feedback only after an explicitly stated request; for dual save, the latest user message must affirmatively mention observation/incident + memory/remember + record/save; never infer or guess.";
 const PROMPT_GUIDELINES = [
   "Use record_observation ONLY when the user explicitly asks to record feedback (for example, 観測に記録して); never infer or guess that feedback should be recorded.",
-  "Set saveToMemory=true ONLY when the user explicitly asks to record and remember/save the same feedback; recording alone means false or omitted.",
+  "Set saveToMemory=true ONLY when the latest user message explicitly affirms all three parts: observation/incident, memory/remember, and record/save (for example, 観測とメモリに記録して or record this incident and save it to memory). Questions, quotes, and negations do not count; recording alone means false or omitted.",
   "record_observation stores structured feedback; do not call it for ordinary discussion or to summarize a task.",
 ];
 
@@ -91,14 +91,19 @@ export default function agentObservation(pi: ExtensionAPI, dependencies: AgentOb
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (isEphemeral(ctx)) throw new Error("Observation unavailable.");
       try {
+        const wantsMemory = (params as any)?.saveToMemory === true;
+        const manager = ctx.sessionManager as any;
+        const sessionEntries = wantsMemory && typeof manager.getEntries === "function" ? manager.getEntries() : undefined;
         const result = recordIncident({
           stateRoot: defaultStateRoot(),
           incident: params,
           memoryRoot: dependencies.memoryRoot,
           filesystem: dependencies.filesystem,
+          sessionEntries,
         });
         if (!result) throw new Error("Observation unavailable.");
-        return { content: [{ type: "text", text: `Recorded ${result.id} (${result.category}).` }] };
+        const memorySuffix = result.memorySaved ? " Memory saved." : "";
+        return { content: [{ type: "text", text: `Recorded ${result.id} (${result.category}).${memorySuffix}` }] };
       } catch {
         throw new Error("Observation could not be recorded.");
       }

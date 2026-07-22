@@ -6,7 +6,6 @@ import {
   chmodSync,
   constants,
   closeSync,
-  existsSync,
   fchmodSync,
   fsyncSync,
   linkSync,
@@ -36,6 +35,7 @@ import {
   MAX_INPUT_FILES,
   MAX_RECURSION_DEPTH,
 } from './agent-usage-report.mjs'
+import { validatePersistedAggregate } from '../extensions/agent-observation/core.ts'
 import { collectConfiguredAgentModelIds, normalizeModelId } from './validate-agent-models.mjs'
 
 export const SCHEMA_VERSION = 1
@@ -583,12 +583,41 @@ function aggregateSummary(report, fileCount) {
   return `aggregate summary: sessions=${fileCount} invocations=${report.totals.invocations} success=${runtime.success} failure=${runtime.failure} aborted=${runtime.aborted} unresolved=${runtime.unresolved}`
 }
 
-function clearStaleAggregate(directory) {
+function ownedReadableRegularFile(path) {
+  let info
   try {
-    unlinkSync(join(directory, REPORT_FILE))
+    info = lstatSync(path)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null
+    throw new Error('invalid aggregate report')
+  }
+  const owned = typeof process.getuid !== 'function' || info.uid === process.getuid()
+  if (!info.isFile() || info.isSymbolicLink() || !owned || (info.mode & 0o400) === 0) throw new Error('invalid aggregate report')
+  return info
+}
+
+function clearStaleAggregate(directory) {
+  const path = join(directory, REPORT_FILE)
+  if (!ownedReadableRegularFile(path)) return
+  try {
+    unlinkSync(path)
   } catch (error) {
     if (error?.code !== 'ENOENT') throw new Error('invalid aggregate report')
   }
+}
+
+function readLegacyAggregate(cohort) {
+  const path = join(cohort.directory, REPORT_FILE)
+  if (!ownedReadableRegularFile(path)) return null
+  const persisted = readJson(path, 'invalid aggregate report')
+  if (persisted?.schemaVersion !== SCHEMA_VERSION || typeof persisted.generatedAt !== 'string'
+    || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(persisted.generatedAt) === false
+    || !Number.isSafeInteger(persisted.fileCount) || persisted.fileCount < 0 || !persisted.aggregate) {
+    throw new Error('invalid aggregate report')
+  }
+  const aggregate = validatePersistedAggregate(persisted.aggregate, cohort)
+  if (!aggregate) throw new Error('invalid aggregate report')
+  return aggregate
 }
 
 function readAutomationSnapshot(cohort) {
@@ -616,7 +645,8 @@ function readAutomationSnapshot(cohort) {
       throw new Error('invalid automation state')
     }
   }
-  const aggregate = mergeUsageReports([value.aggregate], { agentNames: cohort.agentNames, trustedModelIds: cohort.trustedModelIds })
+  const aggregate = validatePersistedAggregate(value.aggregate, { agentNames: cohort.agentNames, trustedModelIds: cohort.trustedModelIds })
+  if (!aggregate) throw new Error('invalid automation state')
   return {
     aggregate,
     observedSessions: Object.keys(value.sessions).length,
@@ -648,7 +678,7 @@ function runReportUnlockedLegacy({ stateRoot, sessionsDir, repoDir, now = new Da
     { agentNames: cohort.agentNames, trustedModelIds: cohort.trustedModelIds },
   ))
   const report = mergeUsageReports(reports, { agentNames: cohort.agentNames, trustedModelIds: cohort.trustedModelIds })
-  privateFile(join(cohort.directory, REPORT_FILE), `${JSON.stringify({
+  atomicPrivateFile(join(cohort.directory, REPORT_FILE), `${JSON.stringify({
     schemaVersion: SCHEMA_VERSION,
     generatedAt: now.toISOString(),
     fileCount: newFiles.length,
@@ -707,13 +737,10 @@ function statusSnapshotUnlocked({ stateRoot, sessionsDir, repoDir }) {
   const files = enumerateSessionFiles(sessionsDir)
   const newFiles = selectNewSessionFiles(files, cohort.baselineHashes)
   let latest = null
-  const reportPath = join(cohort.directory, REPORT_FILE)
   if (newFiles.length === 0) {
     clearStaleAggregate(cohort.directory)
-  } else if (existsSync(reportPath)) {
-    const persisted = readJson(reportPath, 'invalid aggregate report')
-    if (persisted?.schemaVersion !== SCHEMA_VERSION || !persisted.aggregate) throw new Error('invalid aggregate report')
-    latest = persisted.aggregate
+  } else {
+    latest = readLegacyAggregate(cohort)
   }
   return {
     commit: cohort.metadata.commit,

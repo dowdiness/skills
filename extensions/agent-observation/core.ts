@@ -1,4 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { chmodSync, closeSync, constants, existsSync, fchmodSync, fsyncSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -449,13 +450,21 @@ export function entryFingerprint(key: Buffer, entry: unknown): string {
   return hmacHex(key, `entry\0${canonicalEntry(entry)}`);
 }
 
+export function validatePersistedAggregate(value: unknown, cohort: Pick<CohortInfo, "agentNames" | "trustedModelIds">): UsageReport | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const canonical = mergeUsageReports([value as UsageReport], cohort);
+  return isDeepStrictEqual(value, canonical) ? canonical : null;
+}
+
 function validateState(value: any, cohort: CohortInfo): AutomationState | null {
   if (!value || value.schemaVersion !== AUTOMATION_SCHEMA_VERSION || value.commit !== cohort.commit || typeof value.updatedAt !== "string" || !ISO_PATTERN.test(value.updatedAt)
     || !value.aggregate || !Array.isArray(value.aggregate.agents) || !value.sessions || typeof value.sessions !== "object" || Array.isArray(value.sessions)) return null;
   for (const [session, fingerprints] of Object.entries(value.sessions)) {
     if (!HASH_PATTERN.test(session) || !Array.isArray(fingerprints) || fingerprints.some((fingerprint) => typeof fingerprint !== "string" || !HASH_PATTERN.test(fingerprint))) return null;
   }
-  return { schemaVersion: AUTOMATION_SCHEMA_VERSION, commit: cohort.commit, updatedAt: value.updatedAt, aggregate: mergeUsageReports([value.aggregate as UsageReport], cohort), sessions: value.sessions as Record<string, string[]> };
+  const aggregate = validatePersistedAggregate(value.aggregate, cohort);
+  if (!aggregate) return null;
+  return { schemaVersion: AUTOMATION_SCHEMA_VERSION, commit: cohort.commit, updatedAt: value.updatedAt, aggregate, sessions: value.sessions as Record<string, string[]> };
 }
 
 const INVALID_AUTOMATION_STATE = "invalid automation state";
@@ -494,7 +503,9 @@ function readLegacyAggregate(cohort: CohortInfo): UsageReport | null {
     || !Number.isSafeInteger(value.fileCount) || value.fileCount < 0 || !value.aggregate || typeof value.aggregate !== "object" || Array.isArray(value.aggregate)) {
     throw new Error(INVALID_AUTOMATION_STATE);
   }
-  return mergeUsageReports([value.aggregate as UsageReport], cohort);
+  const aggregate = validatePersistedAggregate(value.aggregate, cohort);
+  if (!aggregate) throw new Error(INVALID_AUTOMATION_STATE);
+  return aggregate;
 }
 
 function firstActivationEntries(entries: unknown[], fingerprints: string[], globallySeen: Set<string>, startedAt: string): unknown[] {

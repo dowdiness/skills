@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { AUTOMATION_KEY_FILE, AUTOMATION_STATE_FILE, LOCK_FILE, checkpoint, entryFingerprint, canonicalEntry } from "./core.ts";
+import { AUTOMATION_KEY_FILE, AUTOMATION_STATE_FILE, LOCK_FILE, aggregateSessionRecords, canonicalEntry, checkpoint, entryFingerprint } from "./core.ts";
 
 const fixtureRoots: string[] = [];
 afterEach(() => {
@@ -150,6 +150,71 @@ test("invalid existing automation state fails closed without mutating private st
     expect(readFileSync(statePath, "utf8")).toBe(content);
     expect(readFileSync(keyPath)).toEqual(keyBefore);
   }
+});
+
+test("persisted aggregates must be canonical exact reports for automation and legacy reads", () => {
+  const mutations: Array<[string, (aggregate: any) => void]> = [
+    ["empty agents", (aggregate) => { aggregate.agents = []; }],
+    ["missing agent", (aggregate) => { aggregate.agents.pop(); }],
+    ["duplicate agent", (aggregate) => { aggregate.agents.push(structuredClone(aggregate.agents[0])); }],
+    ["extra agent", (aggregate) => { aggregate.agents.push({ ...structuredClone(aggregate.agents[0]), agent: "extra" }); }],
+    ["invalid invocation counter", (aggregate) => { aggregate.agents[0].invocations = -1; }],
+    ["invalid runtime counter", (aggregate) => { aggregate.agents[0].runtime.success = "one"; }],
+    ["invalid usage counter", (aggregate) => { aggregate.agents[0].usage.input = -1; }],
+    ["untrusted model", (aggregate) => { aggregate.agents[0].models = ["untrusted/model"]; }],
+    ["inconsistent totals", (aggregate) => { aggregate.totals.invocations = 0; }],
+    ["wrong aggregate schema", (aggregate) => { aggregate.schemaVersion = 99; }],
+    ["extra aggregate field", (aggregate) => { aggregate.extra = true; }],
+    ["missing aggregate field", (aggregate) => { delete aggregate.totals.callDurationMs; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    for (const legacy of [false, true]) {
+      const f = fixture();
+      checkpoint({ stateRoot: f.stateRoot, sessionId: "seed", entries: [call("seed"), result("seed")] });
+      const statePath = join(f.cohort, AUTOMATION_STATE_FILE);
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      const aggregate = structuredClone(state.aggregate);
+      mutate(aggregate);
+      const content = legacy
+        ? JSON.stringify({ schemaVersion: 1, generatedAt: "2026-01-01T00:00:03.000Z", fileCount: 1, aggregate })
+        : JSON.stringify({ ...state, aggregate });
+      if (legacy) rmSync(statePath);
+      writeFileSync(legacy ? join(f.cohort, "latest-report.json") : statePath, content);
+      let writeCalled = false;
+      expect(() => checkpoint({
+        stateRoot: f.stateRoot,
+        sessionId: "new",
+        entries: [],
+        writeState: () => { writeCalled = true; },
+      }), name).toThrow("invalid automation state");
+      expect(writeCalled, name).toBe(false);
+      expect(readFileSync(legacy ? join(f.cohort, "latest-report.json") : statePath, "utf8")).toBe(content);
+      if (legacy) expect(() => readFileSync(statePath)).toThrow();
+    }
+  }
+});
+
+test("valid nonzero diagnostic counters survive strict persisted aggregate validation", () => {
+  const f = fixture();
+  const aggregate = aggregateSessionRecords([
+    null,
+    { content: [{ type: "toolCall", name: "subagent", id: "unknown", arguments: { agent: "not-packaged" } }] },
+    { content: [{ type: "toolCall", name: "subagent", id: "missing", arguments: { agent: "worker" } }] },
+  ], { agentNames: new Set(["worker"]), trustedModelIds: new Set(["test/model"]) });
+  expect(aggregate.unknownRecords).toBeGreaterThan(0);
+  expect(aggregate.malformedRecords).toBeGreaterThan(0);
+  expect(aggregate.missingLeaves).toBeGreaterThan(0);
+  writeFileSync(join(f.cohort, "latest-report.json"), JSON.stringify({
+    schemaVersion: 1,
+    generatedAt: "2026-01-01T00:00:03.000Z",
+    fileCount: 1,
+    aggregate,
+  }));
+  const result = checkpoint({ stateRoot: f.stateRoot, sessionId: "diagnostics", entries: [] });
+  expect(result?.report).toEqual(aggregate);
+  expect(result?.report.unknownRecords).toBeGreaterThan(0);
+  expect(result?.report.malformedRecords).toBeGreaterThan(0);
+  expect(result?.report.missingLeaves).toBeGreaterThan(0);
 });
 
 test("automation state symlinks fail closed without replacing the link or target", () => {

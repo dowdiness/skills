@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -224,6 +224,72 @@ test('stale aggregate state is cleared when cohort-created files are removed', (
   expect(status.stdout).toContain('latest aggregate: none')
   expect(() => statSync(reportPath)).toThrow()
   cleanup(fixture)
+})
+
+test('legacy report symlinks are rejected for clear/read and atomically replaced for updates', () => {
+  for (const broken of [false, true]) {
+    const clearFixture = fixtureRepo()
+    expect(run(...args(clearFixture, 'start')).status).toBe(0)
+    const created = join(clearFixture.sessions, 'created.jsonl')
+    session(created)
+    expect(run(...args(clearFixture, 'report')).status).toBe(0)
+    rmSync(created)
+    const clearReport = join(clearFixture.state, clearFixture.shortHead, 'latest-report.json')
+    rmSync(clearReport)
+    const clearTarget = join(clearFixture.root, broken ? 'missing-clear-target' : 'clear-target')
+    if (!broken) writeFileSync(clearTarget, 'clear target content\n')
+    try { symlinkSync(clearTarget, clearReport) } catch (error) {
+      if (error?.code === 'EPERM') { cleanup(clearFixture); continue }
+      throw error
+    }
+    const clearResult = run(...args(clearFixture, 'report'))
+    expect(clearResult.status).toBe(1)
+    expect(clearResult.stderr).toContain('invalid aggregate report')
+    expect(lstatSync(clearReport).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(clearReport)).toBe(clearTarget)
+    if (broken) expect(() => lstatSync(clearTarget)).toThrow()
+    else expect(readFileSync(clearTarget, 'utf8')).toBe('clear target content\n')
+    cleanup(clearFixture)
+
+    const writeFixture = fixtureRepo()
+    expect(run(...args(writeFixture, 'start')).status).toBe(0)
+    session(join(writeFixture.sessions, 'created.jsonl'))
+    const writeReport = join(writeFixture.state, writeFixture.shortHead, 'latest-report.json')
+    const writeTarget = join(writeFixture.root, broken ? 'missing-write-target' : 'write-target')
+    if (!broken) writeFileSync(writeTarget, 'write target content\n')
+    try { symlinkSync(writeTarget, writeReport) } catch (error) {
+      if (error?.code === 'EPERM') { cleanup(writeFixture); continue }
+      throw error
+    }
+    const writeResult = run(...args(writeFixture, 'report'))
+    expect(writeResult.status).toBe(0)
+    expect(lstatSync(writeReport).isFile()).toBe(true)
+    expect(lstatSync(writeReport).isSymbolicLink()).toBe(false)
+    if (broken) expect(() => lstatSync(writeTarget)).toThrow()
+    else expect(readFileSync(writeTarget, 'utf8')).toBe('write target content\n')
+    cleanup(writeFixture)
+
+    const readFixture = fixtureRepo()
+    expect(run(...args(readFixture, 'start')).status).toBe(0)
+    session(join(readFixture.sessions, 'created.jsonl'))
+    expect(run(...args(readFixture, 'report')).status).toBe(0)
+    const readReport = join(readFixture.state, readFixture.shortHead, 'latest-report.json')
+    const readTarget = join(readFixture.root, broken ? 'missing-read-target' : 'read-target')
+    if (!broken) writeFileSync(readTarget, 'read target content\n')
+    rmSync(readReport)
+    try { symlinkSync(readTarget, readReport) } catch (error) {
+      if (error?.code === 'EPERM') { cleanup(readFixture); continue }
+      throw error
+    }
+    const readResult = run(...args(readFixture, 'status'))
+    expect(readResult.status).toBe(1)
+    expect(readResult.stderr).toContain('invalid aggregate report')
+    expect(lstatSync(readReport).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(readReport)).toBe(readTarget)
+    if (broken) expect(() => lstatSync(readTarget)).toThrow()
+    else expect(readFileSync(readTarget, 'utf8')).toBe('read target content\n')
+    cleanup(readFixture)
+  }
 })
 
 test('start snapshots agent names and model IDs for later validation and aggregation', () => {

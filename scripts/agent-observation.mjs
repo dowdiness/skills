@@ -52,6 +52,8 @@ export const MAX_NOTE_LENGTH = 240
 export const BASELINE_FILE = 'baseline.json'
 export const METADATA_FILE = 'metadata.json'
 export const REPORT_FILE = 'latest-report.json'
+export const AUTOMATION_STATE_FILE = 'automation-state.json'
+export const AUTOMATION_KEY_FILE = 'automation-key'
 export const INCIDENT_FILE = 'incidents.tsv'
 export const ACTIVE_POINTER_FILE = 'active-cohort.json'
 export const PENDING_FINISH_FILE = '.pending-finish.json'
@@ -599,8 +601,48 @@ function clearStaleAggregate(directory) {
   }
 }
 
+function readAutomationSnapshot(cohort) {
+  const path = join(cohort.directory, AUTOMATION_STATE_FILE)
+  let info
+  try {
+    info = lstatSync(path)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null
+    throw new Error('invalid automation state')
+  }
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error('invalid automation state')
+  const value = readJson(path, 'invalid automation state')
+  const keys = Object.keys(value ?? {}).sort()
+  if (keys.length !== 5 || keys.join(',') !== 'aggregate,commit,schemaVersion,sessions,updatedAt'
+    || value.schemaVersion !== SCHEMA_VERSION || value.commit !== cohort.metadata.commit
+    || typeof value.updatedAt !== 'string' || !ISO_UTC_PATTERN.test(value.updatedAt)
+    || !value.aggregate || !Array.isArray(value.aggregate.agents)
+    || !value.sessions || typeof value.sessions !== 'object' || Array.isArray(value.sessions)) {
+    throw new Error('invalid automation state')
+  }
+  for (const [session, fingerprints] of Object.entries(value.sessions)) {
+    if (!/^[a-f0-9]{64}$/u.test(session) || !Array.isArray(fingerprints)
+      || fingerprints.some((fingerprint) => typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/u.test(fingerprint))) {
+      throw new Error('invalid automation state')
+    }
+  }
+  const aggregate = mergeUsageReports([value.aggregate], { trustedModelIds: cohort.trustedModelIds })
+  return {
+    aggregate,
+    observedSessions: Object.keys(value.sessions).length,
+    observedEntries: Object.values(value.sessions).reduce((total, fingerprints) => total + fingerprints.length, 0),
+  }
+}
+
 function runReportUnlocked({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
   assertCohortNotFinishing(stateRoot)
+  const cohort = readCohort(stateRoot, repoDir)
+  const automation = readAutomationSnapshot(cohort)
+  if (automation) return { ...cohort, files: [], newFiles: [], report: automation.aggregate, automation }
+  return runReportUnlockedLegacy({ stateRoot, sessionsDir, repoDir, now })
+}
+
+function runReportUnlockedLegacy({ stateRoot, sessionsDir, repoDir, now = new Date() }) {
   const cohort = readCohort(stateRoot, repoDir)
   const files = enumerateSessionFiles(sessionsDir)
   const newFiles = selectNewSessionFiles(files, cohort.baselineHashes)
@@ -653,6 +695,25 @@ function incidentCounts(path) {
 function statusSnapshotUnlocked({ stateRoot, sessionsDir, repoDir }) {
   assertCohortNotFinishing(stateRoot)
   const cohort = readCohort(stateRoot, repoDir)
+  const automation = readAutomationSnapshot(cohort)
+  if (automation) {
+    return {
+      commit: cohort.metadata.commit,
+      startedAt: cohort.metadata.startedAt,
+      newFileCount: 0,
+      observedSessions: automation.observedSessions,
+      observedEntries: automation.observedEntries,
+      automation: true,
+      latest: {
+        invocations: safeCounter(automation.aggregate.totals?.invocations),
+        success: safeCounter(automation.aggregate.totals?.runtime?.success),
+        failure: safeCounter(automation.aggregate.totals?.runtime?.failure),
+        aborted: safeCounter(automation.aggregate.totals?.runtime?.aborted),
+        unresolved: safeCounter(automation.aggregate.totals?.runtime?.unresolved),
+      },
+      incidents: incidentCounts(join(cohort.directory, INCIDENT_FILE)),
+    }
+  }
   const files = enumerateSessionFiles(sessionsDir)
   const newFiles = selectNewSessionFiles(files, cohort.baselineHashes)
   let latest = null
@@ -716,7 +777,7 @@ export function helpText() {
     'Usage: npm run agent-observation -- <start|report|incident|status|finish> [options]',
     '',
     'start records a private, immutable hashed baseline and activates one cohort; run it after setup and before /new.',
-    'report is aggregate-only and should be run after pi exits; it cumulatively includes every current JSONL file created after start.',
+    'report prefers the automatic aggregate after a pi lifecycle checkpoint; before that it is the legacy aggregate-only reporter for current JSONL files created after start.',
     'incident requires --agent NAME --category CATEGORY --severity low|medium|high --note TEXT.',
     'status prints cohort metadata, aggregate runtime counts, and incident category counts without paths or notes.',
     'finish records a UTC finish time and deactivates the cohort; an interrupted finish resumes safely on retry.',
@@ -745,7 +806,7 @@ function runCli(argv) {
         console.log('No new session files observed; no aggregate report was written.')
       } else {
         process.stdout.write(formatReport(result.report, 'table'))
-        console.log(aggregateSummary(result.report, result.newFiles.length))
+        console.log(aggregateSummary(result.report, result.automation?.observedSessions ?? result.newFiles.length))
       }
     } else if (command === 'incident') {
       const result = appendIncident({ ...options, incident })
@@ -753,7 +814,8 @@ function runCli(argv) {
     } else {
       const result = statusSnapshot(options)
       console.log(`cohort commit=${result.commit} started=${result.startedAt}`)
-      console.log(`new session files=${result.newFileCount}`)
+      if (result.automation) console.log(`automation observed sessions=${result.observedSessions} entries=${result.observedEntries}`)
+      else console.log(`new session files=${result.newFileCount}`)
       if (result.latest) console.log(`latest aggregate: invocations=${result.latest.invocations} success=${result.latest.success} failure=${result.latest.failure} aborted=${result.latest.aborted} unresolved=${result.latest.unresolved}`)
       else console.log('latest aggregate: none')
       console.log(`incidents: ${INCIDENT_CATEGORIES.map((category) => `${category}=${result.incidents[category]}`).join(' ')}`)
@@ -768,7 +830,7 @@ function runCli(argv) {
       'could not inspect sessions', 'session file size limit exceeded', 'session file changed during read', 'could not read session file',
       'cohort finishing', 'session file count limit exceeded', 'session directory depth limit exceeded', 'invalid incident agent',
       'invalid incident category', 'invalid incident severity', 'invalid incident note', 'invalid incident',
-      'could not validate agent', 'could not read incident storage', 'invalid aggregate report',
+      'could not validate agent', 'could not read incident storage', 'invalid aggregate report', 'invalid automation state',
     ])
     console.error(`ERROR: ${allowed.has(message) ? message : 'operation failed'}`)
     return 1

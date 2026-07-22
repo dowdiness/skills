@@ -6,8 +6,18 @@ pi extensions that add tools and commands to the coding agent. Extensions are Ty
 
 | Extension | Origin | Purpose |
 |---|---|---|
+| `agent-observation` | manual | Automatic privacy-preserving runtime checkpoints and explicitly requested structured feedback. |
 | `scheduler` | manual | Profile-driven task routing, validation, patch management, and cautious autopilot. |
 | `subagent` | manual | Registers the subagent delegation tool with user/project agent discovery and fallback handling. |
+
+## agent-observation
+
+Automatically checkpoints the active private observation cohort during normal pi
+use: startup/reload/new/resume/fork/clone, tree navigation, settled turns, and
+shutdown. It never finishes a cohort and does nothing for scheduler child or
+ephemeral sessions. Runtime state stores only HMAC fingerprints and aggregate
+runtime evidence. Use natural language such as `観測に記録して` when feedback
+should be recorded; the agent then calls `record_observation` explicitly.
 
 ## scheduler
 

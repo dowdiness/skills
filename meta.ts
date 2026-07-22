@@ -98,6 +98,7 @@ export interface ExtensionMeta {
 }
 
 export const extensions: ExtensionMeta[] = [
+  { name: 'agent-observation', kind: 'manual', source: 'local-pi', outputPath: 'extensions/agent-observation', notes: 'Private automatic aggregate observation checkpoints and explicitly requested structured feedback.' },
   { name: 'scheduler', kind: 'manual', source: 'local-pi', outputPath: 'extensions/scheduler', notes: 'Profile-driven scheduler that routes repository tasks to subagents and records validation state.' },
   { name: 'subagent', kind: 'manual', source: 'local-pi', outputPath: 'extensions/subagent', notes: 'Registers the subagent delegation tool with user/project agent discovery and fallback handling.' },
 ]

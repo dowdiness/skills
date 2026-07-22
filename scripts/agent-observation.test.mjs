@@ -162,6 +162,35 @@ test('baseline stays immutable and reports are cumulative for current cohort-cre
   cleanup(fixture)
 })
 
+test('CLI report and status prefer the automation aggregate while legacy remains available before activation', () => {
+  const fixture = fixtureRepo()
+  expect(run(...args(fixture, 'start')).status).toBe(0)
+  const created = join(fixture.sessions, 'created.jsonl')
+  session(created)
+  expect(run(...args(fixture, 'report')).status).toBe(0)
+  const cohort = join(fixture.state, fixture.shortHead)
+  const legacy = JSON.parse(readFileSync(join(cohort, 'latest-report.json'), 'utf8'))
+  writeFileSync(join(cohort, 'automation-state.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    commit: JSON.parse(readFileSync(join(fixture.state, ACTIVE_POINTER_FILE), 'utf8')).commit,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    aggregate: legacy.aggregate,
+    sessions: { ['a'.repeat(64)]: ['b'.repeat(64)] },
+  }, null, 2)}\n`, { mode: 0o600 })
+  chmodSync(join(cohort, 'automation-state.json'), 0o600)
+  const report = run(...args(fixture, 'report'))
+  expect(report.status).toBe(0)
+  expect(report.stdout).toContain('aggregate summary: files=1 invocations=1')
+  expect(report.stdout).not.toContain(fixture.root)
+  const status = run(...args(fixture, 'status'))
+  expect(status.status).toBe(0)
+  expect(status.stdout).toContain('automation observed sessions=1 entries=1')
+  expect(status.stdout).toContain('latest aggregate: invocations=1')
+  expect(status.stdout).not.toContain('new session files=')
+  expect(run(...args(fixture, 'finish')).status).toBe(0)
+  cleanup(fixture)
+})
+
 test('an existing operation lock blocks mutation and leaves the active pointer and cohort intact', () => {
   const fixture = fixtureRepo()
   expect(run(...args(fixture, 'start')).status).toBe(0)

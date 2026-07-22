@@ -79,7 +79,7 @@ installation of the 16 agent definitions) before agent workflows can run.
 
 - [`skills/`](skills/) — MoonBit, incr, loom, handoff, orchestration, and API-style skills.
 - [`agents/`](agents/) — the complete bundle of 16 agent definitions, including planning, implementation, scouting, documentation, and review workflows.
-- [`extensions/`](extensions/) — profile-driven scheduler and subagent delegation pi extensions.
+- [`extensions/`](extensions/) — automatic agent observation, profile-driven scheduler, and subagent delegation pi extensions.
 - [`scripts/`](scripts/) — validation, local install, cleanup, and vendor-sync helpers.
 - [`vendor/`](vendor/) — submodule sources for vendored skills.
 - [`sources/`](sources/) — notes for generated or historical source material.

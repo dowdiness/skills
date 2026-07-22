@@ -56,16 +56,21 @@ remain a separately budgeted, provider-approved future facility.
 
 ## Private agent observation cohort
 
-The observation workflow measures aggregate runtime evidence and records small, structured human incidents. Run `start` after setup, then `/new` before normal use:
+The observation workflow measures aggregate runtime evidence and records small, structured human incidents. Start a cohort once, then use pi normally—no `/new`, shell command, or special prompt is required:
 
 ```bash
 npm run agent-observation -- start
-# use pi normally; finish/exit pi before reading sessions
-npm run agent-observation -- report
+# use pi normally; checkpoints happen automatically
 npm run agent-observation -- status
-npm run agent-observation -- incident --agent worker --category wrong_route --severity low --note "selected the wrong review route"
+npm run agent-observation -- report
 npm run agent-observation -- finish
 ```
+
+The packaged `agent-observation` extension checkpoints startup/reload/new/resume/fork/clone,
+tree navigation, settled turns, and shutdown. It never finishes a cohort. A user
+may say `観測に記録して`; only then does the agent call `record_observation`.
+The tool validates the snapshotted agent, strict category/severity, and bounded
+note, and returns only an opaque case ID and category. It never infers feedback.
 
 `start` requires a clean Git worktree and creates a private cohort under
 `$XDG_STATE_HOME/skills-agent-observation/<short-head>` (or
@@ -73,28 +78,25 @@ npm run agent-observation -- finish
 commit and UTC start time, hashes of existing normalized absolute JSONL paths,
 a sorted snapshot of packaged agent names and normalized configured model IDs,
 an empty incident store, and an active pointer; it does not read or copy
-session content. Every start/report/incident/status/finish operation takes an
-exclusive lock in the state root and always releases its own lock in `finally`.
-Existing locks fail closed; the workflow never silently removes a live or stale
-lock. Only one cohort can be active, and a same-commit cohort remains
-non-overwritable after `finish`. `report` should be run only after Pi exits. It
-considers every current JSONL file whose normalized path was absent from the
-original baseline, and cumulatively re-aggregates those files on every run
-without changing the baseline. Thus `status.newFileCount` is the total current
-cohort-created file count, including files already reported. If all such files
-are removed, a stale `latest-report.json` is cleared so status cannot show old
-counts with zero current files. The active pointer keeps report/status/incident
-tied to the original cohort even if Git HEAD later changes; incident names and
-trusted model IDs also use the start snapshot rather than current checkout
-configuration. `finish` records a UTC `finishedAt` in metadata, removes the
-active pointer, and must be run before starting another cohort. It first writes
-a private pending-finish marker, so a crash between those steps is resumed safely
-by retrying `finish`; the original timestamp is preserved. While that marker
-exists, start/report/status/incident fail closed with `cohort finishing`. After
-finish, report/status/incident fail with `cohort not found`. `status` shows only
-commit/time, counts, and aggregate runtime fields. Incident notes are bounded
-single-line operator notes; do not put task text, paths, cwd, credentials,
-email addresses, tokens, or other identifying details in them. Valid categories are
+session content. Every operation takes an exclusive lock; existing locks fail
+closed and are never removed automatically. State and cohort directories are
+0700; private files are 0600. Automatic state is one atomic aggregate-plus-
+fingerprint checkpoint file and a separate private random HMAC key. It stores
+only HMACs, safe aggregate numbers, trusted model snapshots, commit, and times:
+never raw entries, messages, responses, task text, cwd, paths, filenames, session
+IDs, tool arguments, or notes in that automatic state. The first activation of a
+session baselines its in-memory entries without counting history; later
+activations recover unseen entries. Fork/clone copied history is baselined as a
+new HMAC session identity. Quit checkpoints and leaves the cohort active.
+
+`report` and `status` prefer the automatic aggregate once it exists. Existing
+cohorts migrate on the next normal pi lifecycle checkpoint; no historical
+session files are imported, and the legacy `latest-report.json` path remains
+available until automatic state is present. Before automatic activation they
+retain the legacy explicit path-based reporter and its immutable file baseline
+behavior. `finish` remains an explicit compatibility command: it records `finishedAt`, removes activation, and safely resumes an
+interrupted finish. The active pointer ties report/status/incident to the start
+snapshot even if Git HEAD later changes. Valid categories are
 `false_clarification`, `false_stop`, `unsafe_proceed`, `wrong_route`,
 `false_complete`, `rework`, and `good_assumption`.
 

@@ -42,7 +42,8 @@ time counted once as `callDurationMs`. Model values are normalized and must
 pass the conservative syntax check and match the repository agent frontmatter;
 unknown or historical values are redacted and counted rather than retained.
 The configured set is read locally and no live model inventory or model call is
-made.
+made. Automatic report summaries label the observed cohort count as `sessions=`;
+legacy file baselines are not presented as session observations.
 Missing requested leaves remain unresolved evidence (`missingLeaves` and
 `runtime.unresolved`); they are not confirmed invocations or runtime failures.
 Task text, cwd, content, messages, responses, credentials, paths, and filenames
@@ -85,14 +86,16 @@ fingerprint checkpoint file and a separate private random HMAC key. It stores
 only HMACs, safe aggregate numbers, trusted model snapshots, commit, and times:
 never raw entries, messages, responses, task text, cwd, paths, filenames, session
 IDs, tool arguments, or notes in that automatic state. The first activation of a
-session baselines its in-memory entries without counting history; later
-activations recover unseen entries. Fork/clone copied history is baselined as a
-new HMAC session identity. Quit checkpoints and leaves the cohort active.
+session observes its in-memory entries, counts only globally unseen post-start
+invocations, and excludes pre-start or copied history; later activations recover
+unseen entries. A valid legacy aggregate is migrated without recounting the
+current session. Fork/clone copied history is baselined as a new HMAC session
+identity. Quit checkpoints and leaves the cohort active.
 
 `report` and `status` prefer the automatic aggregate once it exists. Existing
-cohorts migrate on the next normal pi lifecycle checkpoint; no historical
-session files are imported, and the legacy `latest-report.json` path remains
-available until automatic state is present. Before automatic activation they
+cohorts migrate on the next normal pi lifecycle checkpoint; a valid legacy
+`latest-report.json` aggregate is retained without double-counting the current
+session, and the legacy path remains available until automatic state is present. Before automatic activation they
 retain the legacy explicit path-based reporter and its immutable file baseline
 behavior. `finish` remains an explicit compatibility command: it records `finishedAt`, removes activation, and safely resumes an
 interrupted finish. The active pointer ties report/status/incident to the start

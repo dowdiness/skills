@@ -81,13 +81,13 @@ export default function agentObservation(pi: ExtensionAPI): void {
     promptGuidelines: PROMPT_GUIDELINES,
     parameters: incidentSchema,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      if (isEphemeral(ctx)) return { content: [{ type: "text", text: "Observation unavailable." }], details: {}, isError: true };
+      if (isEphemeral(ctx)) throw new Error("Observation unavailable.");
       try {
         const result = recordIncident({ stateRoot: defaultStateRoot(), incident: params });
-        if (!result) return { content: [{ type: "text", text: "Observation unavailable." }], details: {}, isError: true };
-        return { content: [{ type: "text", text: `Recorded ${result.id} (${result.category}).` }], details: {}, isError: false };
+        if (!result) throw new Error("Observation unavailable.");
+        return { content: [{ type: "text", text: `Recorded ${result.id} (${result.category}).` }] };
       } catch {
-        return { content: [{ type: "text", text: "Observation could not be recorded." }], details: {}, isError: true };
+        throw new Error("Observation could not be recorded.");
       }
     },
   });

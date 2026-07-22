@@ -1,7 +1,8 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, constants, existsSync, fchmodSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, fchmodSync, fsyncSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { validateIncident as validateIncidentShared } from "../../scripts/agent-observation-validation.mjs";
 
 export const AUTOMATION_SCHEMA_VERSION = 1;
 export const AUTOMATION_STATE_FILE = "automation-state.json";
@@ -9,6 +10,7 @@ export const AUTOMATION_KEY_FILE = "automation-key";
 export const ACTIVE_POINTER_FILE = "active-cohort.json";
 export const METADATA_FILE = "metadata.json";
 export const INCIDENT_FILE = "incidents.tsv";
+export const REPORT_FILE = "latest-report.json";
 export const PENDING_FINISH_FILE = ".pending-finish.json";
 export const LOCK_FILE = ".operation.lock";
 export const INCIDENT_CATEGORIES = ["false_clarification", "false_stop", "unsafe_proceed", "wrong_route", "false_complete", "rework", "good_assumption"] as const;
@@ -22,8 +24,7 @@ const AGENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const CASE_PATTERN = /^case-[a-f0-9]{18}$/u;
-const CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
-const SENSITIVE_NOTE_PATTERN = /(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\/|\\|:\/\/|\b(?:api[_ -]?key|bearer|credential|cwd|password|prompt|secret|session|task|token)\b|\b(?:sk|ghp|github_pat_|xox[baprs])-[A-Za-z0-9_-]+\b|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b|\b[A-Za-z_][A-Za-z0-9_]*(?:key|token|secret|password)\s*=)/iu;
+
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 export interface CohortInfo {
@@ -31,6 +32,7 @@ export interface CohortInfo {
   directory: string;
   commit: string;
   shortHead: string;
+  startedAt: string;
   agentNames: Set<string>;
   trustedModelIds: Set<string>;
 }
@@ -137,7 +139,13 @@ function withLock<T>(stateRoot: string, operation: () => T): T {
   try {
     return operation();
   } finally {
-    try { unlinkSync(path); } catch {}
+    try {
+      if (fd !== undefined) {
+        const lockInfo = lstatSync(path);
+        const ownerInfo = fstatSync(fd);
+        if (lockInfo.isFile() && lockInfo.dev === ownerInfo.dev && lockInfo.ino === ownerInfo.ino) unlinkSync(path);
+      }
+    } catch {}
     if (fd !== undefined) closeSync(fd);
   }
 }
@@ -171,7 +179,7 @@ function readCohort(stateRoot: string): CohortInfo | null {
   const agentNames = new Set(metadata.agentNames.filter((value: unknown): value is string => typeof value === "string" && AGENT_PATTERN.test(value)));
   const trustedModelIds = new Set(metadata.modelIds.filter((value: unknown): value is string => typeof value === "string" && MODEL_PATTERN.test(value)));
   if (agentNames.size !== metadata.agentNames.length || trustedModelIds.size !== metadata.modelIds.length) return null;
-  return { stateRoot, directory, commit: pointer.commit, shortHead: pointer.shortHead, agentNames, trustedModelIds };
+  return { stateRoot, directory, commit: pointer.commit, shortHead: pointer.shortHead, startedAt: metadata.startedAt, agentNames, trustedModelIds };
 }
 
 function readKey(cohort: CohortInfo): Buffer | null {
@@ -300,7 +308,6 @@ export function aggregateSessionRecords(records: unknown[], cohort: Pick<CohortI
     else aggregate.runtime.failure += 1;
     if ("model" in leaf) {
       if (typeof leaf.model !== "string") report.malformedRecords += 1;
-      else if (!MODEL_PATTERN.test(leaf.model)) report.malformedRecords += 1;
       else {
         const modelId = normalizeModelId(leaf.model);
         if (!MODEL_PATTERN.test(modelId)) report.malformedRecords += 1;
@@ -343,11 +350,11 @@ export function aggregateSessionRecords(records: unknown[], cohort: Pick<CohortI
     }
   }
   for (const aggregate of report.agents) {
-    report.totals.invocations += aggregate.invocations;
-    for (const field of RUNTIME_FIELDS) report.totals.runtime[field] += aggregate.runtime[field];
+    if (!safeAdd(report.totals, "invocations", aggregate.invocations)) report.malformedRecords += 1;
+    for (const field of RUNTIME_FIELDS) if (!safeAdd(report.totals.runtime, field, aggregate.runtime[field])) report.malformedRecords += 1;
     for (const model of aggregate.models) if (!report.totals.models.includes(model)) report.totals.models.push(model);
-    for (const field of USAGE_FIELDS) report.totals.usage[field] += aggregate.usage[field];
-    report.totals.durationMs += aggregate.durationMs;
+    for (const field of USAGE_FIELDS) if (!safeAdd(report.totals.usage, field, aggregate.usage[field])) report.malformedRecords += 1;
+    if (!safeAdd(report.totals, "durationMs", aggregate.durationMs)) report.malformedRecords += 1;
     aggregate.models.sort();
   }
   report.totals.models.sort();
@@ -357,16 +364,27 @@ export function aggregateSessionRecords(records: unknown[], cohort: Pick<CohortI
 export function mergeUsageReports(reports: UsageReport[], cohort: Pick<CohortInfo, "agentNames" | "trustedModelIds">): UsageReport {
   const result = emptyReport(cohort.agentNames);
   const agents = new Map(result.agents.map((agent) => [agent.agent, agent]));
+  const mergeCounter = (target: Record<string, number>, field: string, value: unknown) => {
+    if (value === undefined) return;
+    if (!safeAdd(target, field, value)) result.malformedRecords += 1;
+  };
+  if (!Array.isArray(reports)) {
+    result.malformedRecords += 1;
+    return result;
+  }
   for (const report of reports) {
-    if (!report || typeof report !== "object") { result.malformedRecords += 1; continue; }
-    for (const source of report.agents ?? []) {
-      if (!source || typeof source !== "object" || !agents.has(source.agent)) { result.unknownRecords += 1; continue; }
+    if (!report || typeof report !== "object" || Array.isArray(report)) { result.malformedRecords += 1; continue; }
+    if (report.schemaVersion !== undefined && report.schemaVersion !== 1) result.malformedRecords += 1;
+    if (!Array.isArray(report.agents)) result.malformedRecords += 1;
+    else for (const source of report.agents) {
+      if (!source || typeof source !== "object" || Array.isArray(source)) { result.malformedRecords += 1; continue; }
+      if (typeof source.agent !== "string" || !agents.has(source.agent)) { result.unknownRecords += 1; continue; }
       const target = agents.get(source.agent)!;
-      if (!safeAdd(target, "invocations", source.invocations)) result.malformedRecords += 1;
-      for (const field of RUNTIME_FIELDS) if (!safeAdd(target.runtime, field, source.runtime?.[field])) result.malformedRecords += 1;
-      for (const field of USAGE_FIELDS) if (!safeAdd(target.usage, field, source.usage?.[field])) result.malformedRecords += 1;
-      if (!safeAdd(target, "durationMs", source.durationMs)) result.malformedRecords += 1;
-      for (const model of source.models ?? []) {
+      mergeCounter(target, "invocations", source.invocations);
+      for (const field of RUNTIME_FIELDS) mergeCounter(target.runtime, field, source.runtime?.[field]);
+      for (const field of USAGE_FIELDS) mergeCounter(target.usage, field, source.usage?.[field]);
+      mergeCounter(target, "durationMs", source.durationMs);
+      if (Array.isArray(source.models)) for (const model of source.models) {
         if (typeof model !== "string") result.malformedRecords += 1;
         else {
           const modelId = normalizeModelId(model);
@@ -375,16 +393,19 @@ export function mergeUsageReports(reports: UsageReport[], cohort: Pick<CohortInf
           else if (!target.models.includes(modelId)) target.models.push(modelId);
         }
       }
+      else if (source.models !== undefined) result.malformedRecords += 1;
     }
-    for (const field of ["unknownRecords", "malformedRecords", "missingLeaves"] as const) if (!safeAdd(result, field, report[field])) result.malformedRecords += 1;
-    if (!safeAdd(result.totals, "callDurationMs", report.totals?.callDurationMs)) result.malformedRecords += 1;
+    mergeCounter(result, "unknownRecords", report.unknownRecords);
+    mergeCounter(result, "malformedRecords", report.malformedRecords);
+    mergeCounter(result, "missingLeaves", report.missingLeaves);
+    mergeCounter(result.totals, "callDurationMs", report.totals?.callDurationMs);
   }
   for (const aggregate of result.agents) {
-    result.totals.invocations += aggregate.invocations;
-    for (const field of RUNTIME_FIELDS) result.totals.runtime[field] += aggregate.runtime[field];
+    if (!safeAdd(result.totals, "invocations", aggregate.invocations)) result.malformedRecords += 1;
+    for (const field of RUNTIME_FIELDS) if (!safeAdd(result.totals.runtime, field, aggregate.runtime[field])) result.malformedRecords += 1;
     for (const model of aggregate.models) if (!result.totals.models.includes(model)) result.totals.models.push(model);
-    for (const field of USAGE_FIELDS) result.totals.usage[field] += aggregate.usage[field];
-    result.totals.durationMs += aggregate.durationMs;
+    for (const field of USAGE_FIELDS) if (!safeAdd(result.totals.usage, field, aggregate.usage[field])) result.malformedRecords += 1;
+    if (!safeAdd(result.totals, "durationMs", aggregate.durationMs)) result.malformedRecords += 1;
     aggregate.models.sort();
   }
   result.totals.models.sort();
@@ -401,7 +422,6 @@ function canonicalize(value: unknown, isHeader = false): unknown {
   const output: Record<string, unknown> = {};
   for (const key of Object.keys(object).sort()) {
     if (key === "parentId") continue;
-    if (isHeader && (key === "cwd" || key === "parentSession")) continue;
     output[key] = canonicalize(object[key], isHeader);
   }
   return output;
@@ -443,7 +463,44 @@ function readAutomationState(cohort: CohortInfo): AutomationState | null {
   return value ? validateState(value, cohort) : null;
 }
 
-export function checkpoint(options: { stateRoot?: string; sessionId: string; entries: unknown[]; now?: Date }): CheckpointResult | null {
+function readLegacyAggregate(cohort: CohortInfo): UsageReport | null {
+  const value = readObject(join(cohort.directory, REPORT_FILE));
+  if (!value || value.schemaVersion !== 1 || typeof value.generatedAt !== "string" || !ISO_PATTERN.test(value.generatedAt)
+    || !Number.isSafeInteger(value.fileCount) || value.fileCount < 0 || !value.aggregate || typeof value.aggregate !== "object") return null;
+  return mergeUsageReports([value.aggregate as UsageReport], cohort);
+}
+
+function firstActivationEntries(entries: unknown[], fingerprints: string[], globallySeen: Set<string>, startedAt: string): unknown[] {
+  const boundary = Date.parse(startedAt);
+  const unseen = entries.filter((_entry, index) => !globallySeen.has(fingerprints[index]));
+  const calls = new Map<string, number | null>();
+  for (const entry of entries) {
+    const content = recordContent(entry);
+    if (!content) continue;
+    for (const item of content) {
+      if (item && typeof item === "object" && item.name === "subagent" && item.type === "toolCall" && typeof item.id === "string" && item.id) {
+        calls.set(item.id, timestampMs(entry));
+      }
+    }
+  }
+  const allowedCalls = new Set<string>();
+  for (const [id, timestamp] of calls) if (timestamp !== null && timestamp >= boundary) allowedCalls.add(id);
+  return unseen.filter((entry) => {
+    const timestamp = timestampMs(entry);
+    if (timestamp === null || timestamp < boundary) return false;
+    const content = recordContent(entry);
+    const hasAllowedCall = !!content?.some((item) => item && typeof item === "object" && item.name === "subagent"
+      && item.type === "toolCall" && typeof item.id === "string" && allowedCalls.has(item.id));
+    const message = resultMessage(entry);
+    const toolCallId = message?.toolName === "subagent" ? (message.toolCallId ?? (entry as any)?.toolCallId) : undefined;
+    const isAllowedResult = typeof toolCallId === "string" && allowedCalls.has(toolCallId);
+    // First activation only admits complete invocation groups. This prevents an
+    // old call paired with a new result (or an unrelated result) from leaking.
+    return hasAllowedCall || isAllowedResult;
+  });
+}
+
+export function checkpoint(options: { stateRoot?: string; sessionId: string; entries: unknown[]; now?: Date; writeState?: (path: string, content: string) => void }): CheckpointResult | null {
   const stateRoot = options.stateRoot ?? stateRootDefault();
   return withLock(stateRoot, () => {
     const cohort = readCohort(stateRoot);
@@ -453,17 +510,24 @@ export function checkpoint(options: { stateRoot?: string; sessionId: string; ent
     const current = readAutomationState(cohort);
     const fingerprints = options.entries.map((entry) => entryFingerprint(key, entry));
     const previous = current?.sessions[identity];
-    let aggregate = current?.aggregate;
-    let unseen: unknown[] = [];
-    if (!previous) {
-      aggregate = current?.aggregate ?? emptyReport(cohort.agentNames);
+    const sessions = { ...(current?.sessions ?? {}) };
+    const globallySeen = new Set(Object.values(sessions).flat());
+    let aggregate: UsageReport;
+    if (!current) {
+      const legacy = readLegacyAggregate(cohort);
+      if (legacy) {
+        aggregate = legacy;
+      } else {
+        const unseen = firstActivationEntries(options.entries, fingerprints, globallySeen, cohort.startedAt);
+        aggregate = mergeUsageReports([emptyReport(cohort.agentNames), aggregateSessionRecords(unseen, cohort)], cohort);
+      }
     } else {
-      const seen = new Set(previous);
-      unseen = options.entries.filter((entry, index) => !seen.has(fingerprints[index]));
-      if (unseen.length > 0) aggregate = mergeUsageReports([aggregate ?? emptyReport(cohort.agentNames), aggregateSessionRecords(unseen, cohort)], cohort);
-      else aggregate = aggregate ?? emptyReport(cohort.agentNames);
+      const unseen = options.entries.filter((_entry, index) => !globallySeen.has(fingerprints[index]));
+      aggregate = unseen.length > 0
+        ? mergeUsageReports([current.aggregate, aggregateSessionRecords(unseen, cohort)], cohort)
+        : current.aggregate;
     }
-    const sessions = { ...(current?.sessions ?? {}), [identity]: [...new Set([...(previous ?? []), ...fingerprints])].sort() };
+    sessions[identity] = [...new Set([...(previous ?? []), ...fingerprints])].sort();
     const state: AutomationState = {
       schemaVersion: AUTOMATION_SCHEMA_VERSION,
       commit: cohort.commit,
@@ -471,7 +535,8 @@ export function checkpoint(options: { stateRoot?: string; sessionId: string; ent
       aggregate,
       sessions,
     };
-    atomicPrivateFile(join(cohort.directory, AUTOMATION_STATE_FILE), `${JSON.stringify(state, null, 2)}\n`);
+    const content = `${JSON.stringify(state, null, 2)}\n`;
+    (options.writeState ?? atomicPrivateFile)(join(cohort.directory, AUTOMATION_STATE_FILE), content);
     const observedEntries = Object.values(sessions).reduce((total, value) => total + value.length, 0);
     return { report: aggregate, observedSessions: Object.keys(sessions).length, observedEntries, invocationCount: aggregate.totals.invocations, shortHead: cohort.shortHead };
   });
@@ -487,13 +552,7 @@ export function readAutomationAggregate(stateRoot = stateRootDefault()): Checkpo
 }
 
 export function validateIncident(input: unknown, agentNames: Set<string>): { agent: string; category: string; severity: string; note: string } {
-  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid incident");
-  const value = input as Record<string, unknown>;
-  if (typeof value.agent !== "string" || !agentNames.has(value.agent)) throw new Error("invalid incident agent");
-  if (typeof value.category !== "string" || !(INCIDENT_CATEGORIES as readonly string[]).includes(value.category)) throw new Error("invalid incident category");
-  if (typeof value.severity !== "string" || !(INCIDENT_SEVERITIES as readonly string[]).includes(value.severity)) throw new Error("invalid incident severity");
-  if (typeof value.note !== "string" || value.note.length === 0 || value.note.length > MAX_NOTE_LENGTH || CONTROL_PATTERN.test(value.note) || SENSITIVE_NOTE_PATTERN.test(value.note)) throw new Error("invalid incident note");
-  return { agent: value.agent, category: value.category, severity: value.severity, note: value.note };
+  return validateIncidentShared(input, agentNames, MAX_NOTE_LENGTH);
 }
 
 export function recordIncident(options: { stateRoot?: string; incident: unknown; now?: Date }): { id: string; category: string } | null {

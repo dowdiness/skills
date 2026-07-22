@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import {
   aggregateSessionLines,
+  aggregateSessionRecords,
   collectJsonlFiles,
   formatInputError,
   formatReport,
@@ -318,6 +319,20 @@ test('explicit non-JSONL files are rejected with a specific path-free CLI error'
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('explicit cohort snapshots preserve historical agents and reject current-only agents', () => {
+  const records = [{ message: { toolName: 'subagent', details: { results: [
+    { agent: 'historical-worker', exitCode: 0, model: 'test/model' },
+    { agent: 'worker', exitCode: 0, model: 'test/model' },
+  ] } } }]
+  const report = aggregateSessionRecords(records, { agentNames: ['historical-worker'], trustedModelIds: ['test/model'] })
+  expect(report.agents.map((agent) => agent.agent)).toEqual(['historical-worker'])
+  expect(report.totals.invocations).toBe(1)
+  expect(report.unknownRecords).toBe(1)
+  const merged = mergeUsageReports([report], { agentNames: new Set(['historical-worker']), trustedModelIds: new Set(['test/model']) })
+  expect(merged.agents[0].agent).toBe('historical-worker')
+  expect(() => aggregateSessionRecords([], { agentNames: ['historical-worker', 'historical-worker'], trustedModelIds: [] })).toThrow('invalid agent names')
 })
 
 test('directory scanning skips non-JSONL files and does not expose their contents or filenames', () => {

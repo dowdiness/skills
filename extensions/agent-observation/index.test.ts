@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { afterEach, expect, mock, test } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,6 +13,12 @@ mock.module("typebox", () => ({
 mock.module("@earendil-works/pi-ai", () => ({ StringEnum: (values: unknown, options: unknown) => ({ type: "string", values, options }) }));
 
 const { default: factory } = await import("./index.ts");
+const originalEnvironment = { XDG_STATE_HOME: process.env.XDG_STATE_HOME, PI_SCHEDULER_CHILD: process.env.PI_SCHEDULER_CHILD };
+afterEach(() => {
+  for (const [key, value] of Object.entries(originalEnvironment)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+});
 
 function activeFixture() {
   const root = mkdtempSync(join(tmpdir(), "agent-observation-index-"));
@@ -62,8 +68,8 @@ test("registers all automatic lifecycle checkpoints and records only explicitly 
   expect(tool.promptGuidelines.join(" ")).toContain("ONLY");
   expect(tool.promptGuidelines.join(" ")).toContain("never infer or guess");
   const c = context();
-  for (const reason of ["startup", "reload", "new", "resume", "fork"]) await handlers.get("session_start")?.({ reason }, c.ctx);
-  for (const reason of ["quit", "reload", "new", "resume", "fork"]) await handlers.get("session_shutdown")?.({ reason }, c.ctx);
+  for (const reason of ["startup", "reload", "new", "resume", "fork", "clone"]) await handlers.get("session_start")?.({ reason }, c.ctx);
+  for (const reason of ["quit", "reload", "new", "resume", "fork", "clone"]) await handlers.get("session_shutdown")?.({ reason }, c.ctx);
   await handlers.get("session_tree")?.({}, c.ctx);
   await handlers.get("agent_settled")?.({}, c.ctx);
   const state = JSON.parse(readFileSync(join(f.cohort, "automation-state.json"), "utf8"));
@@ -71,6 +77,8 @@ test("registers all automatic lifecycle checkpoints and records only explicitly 
   const result = await tool.execute("opaque", { agent: "worker", category: "wrong_route", severity: "low", note: "short operator note" }, undefined, undefined, c.ctx);
   expect(result.content[0].text).toMatch(/^Recorded case-[a-f0-9]{18} \(wrong_route\)\.$/);
   expect(result.content[0].text).not.toContain("short operator note");
+  expect(result).not.toHaveProperty("isError");
+  expect(result).not.toHaveProperty("details");
   const incidents = readFileSync(join(f.cohort, "incidents.tsv"), "utf8");
   expect(incidents).toContain("\tworker\twrong_route\tlow\tshort operator note\n");
 });
@@ -89,7 +97,12 @@ test("scheduler children and ephemeral sessions are no-ops", async () => {
   factory({ on: (name: string, handler: any) => handlers2.set(name, handler), registerTool: (definition: any) => { tool = definition; } } as any);
   await handlers2.get("session_start")({}, ephemeral.ctx);
   expect(ephemeral.statuses.get("agent-observation")).toBeUndefined();
-  const unavailable = await tool.execute("opaque", { agent: "worker", category: "wrong_route", severity: "low", note: "short" }, undefined, undefined, ephemeral.ctx);
-  expect(unavailable.isError).toBe(true);
-  expect(unavailable.content[0].text).not.toContain("short");
+  let unavailable: unknown;
+  try {
+    await tool.execute("opaque", { agent: "worker", category: "wrong_route", severity: "low", note: "short" }, undefined, undefined, ephemeral.ctx);
+  } catch (error) {
+    unavailable = error;
+  }
+  expect(unavailable).toBeInstanceOf(Error);
+  expect((unavailable as Error).message).toBe("Observation unavailable.");
 });

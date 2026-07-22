@@ -27,6 +27,7 @@ import { dirname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { readAgentPromptFiles } from './agent-prompt-contracts.mjs'
+import { validateIncident as validateIncidentShared } from './agent-observation-validation.mjs'
 import {
   aggregateSessionLines,
   formatReport,
@@ -60,8 +61,6 @@ export const PENDING_FINISH_FILE = '.pending-finish.json'
 
 const CATEGORY_SET = new Set(INCIDENT_CATEGORIES)
 const SEVERITY_SET = new Set(INCIDENT_SEVERITIES)
-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u
-const SENSITIVE_NOTE_PATTERN = /(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\/|\\|:\/\/|\b(?:api[_ -]?key|bearer|credential|cwd|password|prompt|secret|session|task|token)\b|\b(?:sk|ghp|github_pat_|xox[baprs])-[A-Za-z0-9_-]+\b|\b(?:github_pat_|gh[pousr]_|xox[baprs]-)[A-Za-z0-9_-]+\b|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b|\b[A-Za-z_][A-Za-z0-9_]*(?:key|token|secret|password)\s*=)/iu
 const SAFE_CASE_ID_PATTERN = /^case-[a-f0-9]{18}$/
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/+@:-]{0,199}$/
@@ -510,16 +509,7 @@ export function createCohort(options) {
 }
 
 export function validateIncident(input, agentNames = packagedAgentNames()) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid incident')
-  const { agent, category, severity, note } = input
-  if (!(agentNames instanceof Set) || typeof agent !== 'string' || !agentNames.has(agent)) throw new Error('invalid incident agent')
-  if (typeof category !== 'string' || !CATEGORY_SET.has(category)) throw new Error('invalid incident category')
-  if (typeof severity !== 'string' || !SEVERITY_SET.has(severity)) throw new Error('invalid incident severity')
-  if (typeof note !== 'string' || note.length === 0 || note.length > MAX_NOTE_LENGTH
-    || CONTROL_CHARACTER_PATTERN.test(note) || SENSITIVE_NOTE_PATTERN.test(note)) {
-    throw new Error('invalid incident note')
-  }
-  return Object.freeze({ agent, category, severity, note })
+  return Object.freeze(validateIncidentShared(input, agentNames, MAX_NOTE_LENGTH))
 }
 
 function caseId() {
@@ -590,7 +580,7 @@ export function finishCohort(options) {
 
 function aggregateSummary(report, fileCount) {
   const runtime = report.totals.runtime
-  return `aggregate summary: files=${fileCount} invocations=${report.totals.invocations} success=${runtime.success} failure=${runtime.failure} aborted=${runtime.aborted} unresolved=${runtime.unresolved}`
+  return `aggregate summary: sessions=${fileCount} invocations=${report.totals.invocations} success=${runtime.success} failure=${runtime.failure} aborted=${runtime.aborted} unresolved=${runtime.unresolved}`
 }
 
 function clearStaleAggregate(directory) {
@@ -626,7 +616,7 @@ function readAutomationSnapshot(cohort) {
       throw new Error('invalid automation state')
     }
   }
-  const aggregate = mergeUsageReports([value.aggregate], { trustedModelIds: cohort.trustedModelIds })
+  const aggregate = mergeUsageReports([value.aggregate], { agentNames: cohort.agentNames, trustedModelIds: cohort.trustedModelIds })
   return {
     aggregate,
     observedSessions: Object.keys(value.sessions).length,
@@ -655,9 +645,9 @@ function runReportUnlockedLegacy({ stateRoot, sessionsDir, repoDir, now = new Da
   // remain cumulative and a file observed while it was still being written is never lost.
   const reports = newFiles.map((file) => aggregateSessionLines(
     readSessionFile(file).split(/\r?\n/),
-    { trustedModelIds: cohort.trustedModelIds },
+    { agentNames: cohort.agentNames, trustedModelIds: cohort.trustedModelIds },
   ))
-  const report = mergeUsageReports(reports, { trustedModelIds: cohort.trustedModelIds })
+  const report = mergeUsageReports(reports, { agentNames: cohort.agentNames, trustedModelIds: cohort.trustedModelIds })
   privateFile(join(cohort.directory, REPORT_FILE), `${JSON.stringify({
     schemaVersion: SCHEMA_VERSION,
     generatedAt: now.toISOString(),

@@ -715,7 +715,7 @@ export function helpText() {
   return [
     'Usage: npm run agent-observation -- <start|report|incident|status|finish> [options]',
     '',
-    'start records a private, immutable hashed baseline and activates one cohort; run it after setup and before /clear/new session.',
+    'start records a private, immutable hashed baseline and activates one cohort; run it after setup and before /new.',
     'report is aggregate-only and should be run after pi exits; it cumulatively includes every current JSONL file created after start.',
     'incident requires --agent NAME --category CATEGORY --severity low|medium|high --note TEXT.',
     'status prints cohort metadata, aggregate runtime counts, and incident category counts without paths or notes.',

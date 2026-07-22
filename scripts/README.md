@@ -56,7 +56,7 @@ remain a separately budgeted, provider-approved future facility.
 
 ## Private agent observation cohort
 
-The observation workflow measures aggregate runtime evidence and records small, structured human incidents. Run `start` after setup, then `/clear` (or begin a new session) before normal use:
+The observation workflow measures aggregate runtime evidence and records small, structured human incidents. Run `start` after setup, then `/new` before normal use:
 
 ```bash
 npm run agent-observation -- start

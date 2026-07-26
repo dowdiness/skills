@@ -12,7 +12,13 @@ description: >
 
 Reference for consistent, safe error handling across MoonBit projects. Grounded in MoonBit's error primitives and designed for long-running WASM/browser applications where crashes are especially costly.
 
-**MoonBit version note:** Based on MoonBit's current error handling model (2025). `suberror A B` bare syntax is deprecated; use `suberror A { A(B) }`. Verify against [MoonBit error handling docs](https://docs.moonbitlang.com/en/latest/language/error-handling.html) if syntax has changed.
+**MoonBit version note:** Based on MoonBit's current `raise`/`catch` error
+handling model (verified in 2026). `try?` is deprecated; materialize an error as
+`Result[T, E]` with explicit
+`Ok(expr) catch { error => Err(error) }`. The `suberror A B` bare syntax is also
+deprecated; use `suberror A { A(B) }`. Verify against
+[MoonBit error handling docs](https://docs.moonbitlang.com/en/latest/language/error-handling.html)
+if syntax has changed.
 
 ## Quick reference
 
@@ -22,7 +28,7 @@ Reference for consistent, safe error handling across MoonBit projects. Grounded 
 | `fail("msg")` | Yes | Yes (auto) | Defect detected before mutation or with rollback |
 | `raise MyError::V(...)` | Yes | No (manual) | Expected failure callers handle programmatically |
 | `try { ... } catch { ... }` | — | — | Catch and handle at boundaries |
-| `try?` | — | — | Convert to `Result[T, E]` (preserves concrete `E`) |
+| `Ok(expr) catch { error => Err(error) }` | — | — | Materialize a raised error as `Result[T, E]` |
 | `raise?` | — | — | Error polymorphism for higher-order functions |
 | `noraise` | — | — | Explicitly infallible (but does NOT prevent `abort`) |
 
@@ -375,12 +381,18 @@ fn parse_cst(source : String) -> (CstNode, Array[Diagnostic]) raise LexError {
 
 ### Testing `raise` (expected failures)
 
-Use `try?` to convert to Result, then assert:
+Use an explicit `catch` to materialize the raised error as `Result`, then
+assert:
 
 ```moonbit
 test "div by zero raises DivError" {
-  let result : Result[Int, _] = try? { div(10, 0) }
-  inspect(result, content="Err(DivByZero)")
+  let result : Result[Int, DivError] = Ok(div(10, 0)) catch {
+    error => Err(error)
+  }
+  match result {
+    Err(DivError(message)) => assert_eq(message, "division by zero")
+    Ok(_) => fail("expected division to fail")
+  }
 }
 ```
 
@@ -414,6 +426,7 @@ test "malformed input produces diagnostics" {
 | `catch { _ => abort("...") }` | Converts catchable error to uncatchable crash | Propagate with `raise` or use `fail` |
 | `catch { _ => () }` in library code | Silently swallows defects and expected errors | Handle specific types, rethrow unknown |
 | `fail("invalid input: ...")` for user input | `fail` is for defects, not validation | `raise ConcreteError::InvalidInput(...)` |
+| `try? expr` | Deprecated error-to-`Result` shorthand | Use `Ok(expr) catch { error => Err(error) }` |
 | `raise` in untyped `Error` for public APIs | Callers lose exhaustiveness checking | Use concrete `raise MyError` |
 | `abort` in code reachable from FFI | Crashes WASM module, bypasses catch | Audit and convert to `fail` or `raise` |
 | `noraise` on function that calls `abort` | Misleading — `noraise` only covers `raise`, not `abort` | Document abort paths or eliminate them |

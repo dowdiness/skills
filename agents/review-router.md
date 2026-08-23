@@ -1,7 +1,7 @@
 ---
 name: review-router
 description: Choose between ensemble-review and parallel-review based on scope and risk
-model: deepseek/deepseek-v4-flash
+model: opencode-go/deepseek-v4-flash
 fallbackModels: opencode-go/qwen3.7-plus
 tools: read, subagent
 ---

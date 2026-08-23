@@ -2,7 +2,7 @@
 name: planner
 description: Creates implementation plans from context and requirements
 tools: read, grep, find, ls
-model: qwen-token-plan/qwen3.7-max
+model: opencode-go/qwen3.7-max
 fallbackModels: opencode-go/deepseek-v4-pro, opencode/deepseek-v4-pro, deepseek/deepseek-v4-pro, deepseek/deepseek-v4-flash
 ---
 

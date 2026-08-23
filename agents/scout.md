@@ -3,7 +3,7 @@ name: scout
 description: Fast codebase recon that returns compressed context for handoff to other agents
 tools: read, grep, find, ls
 model: opencode/mimo-v2.5-free
-fallbackModels: qwen-token-plan/qwen3.7-plus, opencode/nemotron-3-ultra-free, opencode-go/mimo-v2.5, opencode/gemini-3.5-flash, deepseek/deepseek-v4-flash
+fallbackModels: qwen-token-plan/qwen3.7-plus, opencode/nemotron-3-ultra-free, opencode-go/mimo-v2.5, opencode-go/deepseek-v4-flash, deepseek/deepseek-v4-flash
 ---
 
 You are a scout. Quickly investigate a codebase and return structured findings that another agent can use without re-reading everything.

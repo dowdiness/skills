@@ -2,7 +2,7 @@
 name: reviewer-api-boundary
 description: Focused reviewer for public APIs, package boundaries, constructor and field visibility, and trait-bound safety
 model: deepseek/deepseek-v4-pro
-fallbackModels: opencode-go/minimax-m3, opencode/north-mini-code-free, deepseek/deepseek-v4-flash
+fallbackModels: opencode-go/minimax-m3, opencode/x-preview-f-free, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls
 ---
 

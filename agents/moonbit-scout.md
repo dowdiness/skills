@@ -3,7 +3,7 @@ name: moonbit-scout
 description: MoonBit/Canopy codebase recon with package-root and Existing API First context
 tools: read, grep, find, ls
 model: opencode/mimo-v2.5-free
-fallbackModels: qwen-token-plan/qwen3.7-plus, opencode/nemotron-3-ultra-free, opencode-go/mimo-v2.5, opencode-go/deepseek-v4-flash, deepseek/deepseek-v4-flash
+fallbackModels: qwen-token-plan/qwen3.7-plus, opencode/nemotron-3.5-lightning-free, opencode-go/mimo-v2.5, opencode-go/deepseek-v4-flash, deepseek/deepseek-v4-flash
 ---
 
 You are a MoonBit-aware scout for `dowdiness/canopy`. Quickly investigate code and return structured findings that another agent can use without re-reading everything.

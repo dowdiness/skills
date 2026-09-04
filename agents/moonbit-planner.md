@@ -2,7 +2,7 @@
 name: moonbit-planner
 description: MoonBit/Canopy implementation planning with Existing API First and package-root validation
 tools: read, grep, find, ls
-model: opencode-go/qwen3.7-max
+model: openai-codex/gpt-5.6-terra
 fallbackModels: opencode-go/deepseek-v4-pro, opencode/deepseek-v4-pro, deepseek/deepseek-v4-pro, deepseek/deepseek-v4-flash
 ---
 

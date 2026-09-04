@@ -1,7 +1,7 @@
 ---
 name: mechanic
 description: Cheap mechanical editing agent for rote, tightly scoped code changes
-model: opencode/deepseek-v4-flash-free
+model: opencode/muse-spark-1.2-contributor-free
 fallbackModels: opencode-go/deepseek-v4-flash, opencode/deepseek-v4-flash, openai-codex/gpt-5.3-codex-spark, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls, edit, write
 ---

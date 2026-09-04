@@ -2,7 +2,7 @@
 name: planner
 description: Creates implementation plans from context and requirements
 tools: read, grep, find, ls
-model: opencode-go/qwen3.7-max
+model: openai-codex/gpt-5.6-terra
 fallbackModels: opencode-go/deepseek-v4-pro, opencode/deepseek-v4-pro, deepseek/deepseek-v4-pro, deepseek/deepseek-v4-flash
 ---
 

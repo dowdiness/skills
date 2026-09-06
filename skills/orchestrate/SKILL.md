@@ -59,20 +59,11 @@ For delegated work:
 
 Treat worker output as claims until validated.
 
-For structured JSON:
-
-1. Strict-parse the raw output first.
-2. Use the known schema parser when available. For `moonbit-housekeeping release`, pipe raw worker output through:
-   ```bash
-   ~/.claude/skills/moonbit-housekeeping/parse-worker-output.py --root Changelog
-   ~/.claude/skills/moonbit-housekeeping/parse-worker-output.py --root ApiReview
-   ~/.claude/skills/moonbit-housekeeping/parse-worker-output.py --root DocDrift
-   ```
-   For parallel review findings with a shared schema, prefer `--root ReviewFindings`.
-3. If parsing fails, re-request JSON-only from the worker instead of accepting prose.
-4. Validate every material claim against file, line, diff, command, or test evidence before including it in the parent review.
-
-Do not claim trailing commas are supported; `e2-trailing-comma` is expected to fail in the parser regression suite.
+For structured JSON, read
+[Structured Worker Output Intake](../moonbit-housekeeping/references/worker-output-intake.md).
+It owns strict parsing, known-schema validation, and failure handling. Keep the
+`moonbit-housekeeping` parser and schemas installed when using those formats.
+Validate material claims against evidence before including them in the report.
 
 ## Verification Plan
 

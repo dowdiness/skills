@@ -78,18 +78,11 @@ If the host agent supports delegated workers or parallel agent tasks, run the wo
 
 ### Step 4: Render report (coordinator)
 
-**Parse hygiene.** Worker prompts demand JSON-only output, but adherence is imperfect — preamble ("Now I have...", "The .mbti files are already in sync..."), code-fence wrappers (```json), and trailing commentary leak occasionally. Before parsing, apply lenient extraction:
-
-1. **Strict pass first.** Try `JSON.parse` on the raw output. If it succeeds, proceed.
-2. **Lenient fallback.** If strict fails, attempt one of these in order:
-   - **Preferred — `parse-worker-output.py` (BAML schema-aligned parser).** For release workers (changelog, api-review, doc-drift), pipe the raw output through:
-     ```
-     ./parse-worker-output.py --root Changelog        # or ApiReview / DocDrift
-     ```
-     The script lives next to this SKILL.md, uses uv-managed Python 3.13 + `baml-lib`, and handles preamble, code-fence wrapping, and trailing commentary structurally (not by regex). Auto-installs deps on first run.
-     Regression tests: see `tests/run-tests.nu` (27 fixtures covering happy path, real-world prose leaks, edge cases, CLI surface, stress, concurrency, and Codex review findings).
-   - **Inline regex fallback** (if the script is unavailable): locate the first `{`, locate the matching closing `}` (balanced-brace count), discard everything outside. Strip ```json / ``` fences if present at the boundaries.
-3. **Re-request on hard failure.** If both fail, ask the worker to re-output JSON-only — do not silently accept the prose-wrapped output.
+**Parse hygiene.** Before accepting structured output, follow
+[Structured Worker Output Intake](references/worker-output-intake.md).
+Release outputs must pass the bundled schema parser using their corresponding
+root; strict JSON syntax alone is insufficient. Other outputs need validation
+against their declared contract. Check material claims separately.
 
 Render the unified report (format below). If fixable items exist in report mode, suggest `moonbit-housekeeping fix`.
 

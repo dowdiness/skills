@@ -84,6 +84,18 @@ installation of the 16 agent definitions) before agent workflows can run.
 - [`vendor/`](vendor/) — submodule sources for vendored skills.
 - [`sources/`](sources/) — notes for generated or historical source material.
 
+## Shared agent guidance
+
+- [`context7-mcp`](skills/context7-mcp/SKILL.md) — current external API
+  documentation lookup, loaded for library-specific work.
+- [`rivet`](skills/rivet/SKILL.md) — Rivet editor and design-variant workflows;
+  detailed CLI guidance is loaded only for Rivet work.
+- [Structured worker intake](skills/moonbit-housekeeping/references/worker-output-intake.md)
+  — parsing and schema validation shared by housekeeping and orchestration.
+
+These files are maintained here. Local host skill directories should link to
+`skills/<name>` rather than maintain separate editable copies.
+
 ## Common commands
 
 ```bash

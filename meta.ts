@@ -11,6 +11,8 @@ export interface SkillMeta {
 }
 
 export const skills: SkillMeta[] = [
+  { name: 'context7-mcp', kind: 'manual', source: 'in-tree', notes: 'Current external API documentation lookup; curated from the local Context7 skill.' },
+  { name: 'rivet', kind: 'manual', source: 'in-tree', notes: 'Rivet design exploration with deferred CLI guidance, migrated from local Codex configuration.' },
   { name: 'moonbit', kind: 'manual', source: 'in-tree' },
   { name: 'moonbit-agent-guide', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide', vendorPath: 'vendor/moonbitlang/moonbit-agent-guide', sourceSkillPath: 'vendor/moonbitlang/moonbit-agent-guide/moonbit-agent-guide/SKILL.md', outputPath: 'skills/moonbit-agent-guide/SKILL.md' },
   { name: 'moonbit-c-binding', kind: 'vendor', source: 'https://github.com/moonbitlang/moonbit-agent-guide', vendorPath: 'vendor/moonbitlang/moonbit-agent-guide', sourceSkillPath: 'vendor/moonbitlang/moonbit-agent-guide/moonbit-c-binding/SKILL.md', outputPath: 'skills/moonbit-c-binding/SKILL.md' },

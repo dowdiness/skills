@@ -1,7 +1,7 @@
 ---
 name: reviewer-correctness
 description: Focused reviewer for correctness, edge cases, invariants, and semantic regressions
-model: openai-codex/gpt-5.3-codex-spark
+model: openai-codex/gpt-6-astra:medium
 fallbackModels: opencode/muse-spark-1.2-contributor-free, deepseek/deepseek-v4-pro, opencode-go/deepseek-v4-flash, opencode/deepseek-v4-flash, deepseek/deepseek-v4-flash
 tools: read, grep, find, ls
 ---

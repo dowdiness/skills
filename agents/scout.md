@@ -2,8 +2,8 @@
 name: scout
 description: Fast codebase recon that returns compressed context for handoff to other agents
 tools: read, grep, find, ls
-model: openai-codex/gpt-5.3-codex-spark
-fallbackModels: qwen-token-plan/qwen3.7-plus, opencode/nemotron-3.5-lightning-free, opencode-go/mimo-v2.5, opencode-go/deepseek-v4-flash, deepseek/deepseek-v4-flash
+model: openai-codex/gpt-5.6-terra:low
+fallbackModels: qwen-token-plan/qwen3.7-plus, opencode/muse-spark-1.3-contributor-free, opencode-go/mimo-v2.5, opencode-go/deepseek-v4-flash, deepseek/deepseek-v4-flash
 ---
 
 You are a scout. Quickly investigate a codebase and return structured findings that another agent can use without re-reading everything.
